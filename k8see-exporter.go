@@ -23,10 +23,13 @@ import (
 
 type k8sEvent struct {
 	// e.FirstTimestamp, e.Type, e.Reason, e.Name, e.Message, e.UID
-	Type    string `json: "type"`
-	Reason  string `json: "reason"`
-	Name    string `json: "name"`
-	Message string `json: "message"`
+	EventTime string `json:eventTime`
+	FirstTime string `json:firstTime`
+	Type      string `json: "type"`
+	Reason    string `json: "reason"`
+	Name      string `json: "name"`
+	Message   string `json: "message"`
+	Namespace string `json: "namespace"`
 }
 
 type appK8sEvents2Redis struct {
@@ -134,12 +137,17 @@ func main() {
 			// fmt.Printf("FirstTimestamp: %s \n", e.FirstTimestamp)
 			// fmt.Printf("Namespace: %s \n", e.Namespace)
 			// fmt.Printf("Name: %s \n", e.Name)
-			log.Debugf("ADDED: Type=%s Reason=%s Name=%s FirstTimestamp=%s Message=%s UID=%s\n", e.Type, e.Reason, e.Name, e.FirstTimestamp, e.Message, e.UID)
+			log.Debugf("ADDED: eventTime=%s Type=%s Reason=%s Name=%s FirstTimestamp=%s Message=%s UID=%s\n", e.EventTime, e.Type, e.Reason, e.Name, e.FirstTimestamp, e.Message, e.UID)
+			eventTime := time.Unix(e.EventTime.ProtoMicroTime().Seconds, int64(e.EventTime.ProtoMicroTime().Nanos))
+			firstTime := time.Date(e.FirstTimestamp.Year(), e.FirstTimestamp.Month(), e.FirstTimestamp.Day(), e.FirstTimestamp.Hour(), e.FirstTimestamp.Minute(), e.FirstTimestamp.Second(), e.FirstTimestamp.Nanosecond(), e.FirstTimestamp.Location())
 			example := k8sEvent{
-				Type:    e.Type,
-				Reason:  e.Reason,
-				Name:    e.Name,
-				Message: e.Message,
+				EventTime: eventTime.String(),
+				FirstTime: firstTime.String(),
+				Type:      e.Type,
+				Reason:    e.Reason,
+				Name:      e.Name,
+				Message:   e.Message,
+				Namespace: e.Namespace,
 			}
 			app.Write2Stream(example)
 		},
@@ -195,10 +203,13 @@ func (a *appK8sEvents2Redis) Write2Stream(c k8sEvent) {
 	err := a.producer.Enqueue(&redisqueue.Message{
 		Stream: a.redisStream,
 		Values: map[string]interface{}{
-			"name":    c.Name,
-			"reason":  c.Reason,
-			"type":    c.Type,
-			"message": c.Message,
+			"name":      c.Name,
+			"namespace": c.Namespace,
+			"reason":    c.Reason,
+			"type":      c.Type,
+			"message":   c.Message,
+			"eventTime": c.EventTime,
+			"firstTime": c.FirstTime,
 		},
 	})
 	if err != nil {
