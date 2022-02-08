@@ -11,8 +11,8 @@ function checkVarIsNotEmpty
   fi
 }
 
-checkVarIsNotEmpty $REDIS_HOST
-checkVarIsNotEmpty $REDIS_STREAM
+checkVarIsNotEmpty REDIS_HOST
+checkVarIsNotEmpty REDIS_STREAM
 
 echo "redis_host: $REDIS_HOST"          > /opt/k8see-exporter/conf.yaml
 echo "redis_port: ${REDIS_PORT:-6379}" >> /opt/k8see-exporter/conf.yaml
