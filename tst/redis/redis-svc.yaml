@@ -1,0 +1,12 @@
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: svc-redis
+  namespace: default
+spec:
+  selector:
+    app: redis
+  ports:
+  # Default port used by the image
+  - port: 6379

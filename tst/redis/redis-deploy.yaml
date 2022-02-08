@@ -1,0 +1,39 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: default
+  annotations:
+    kubernetes.io/change-cause: Creation
+    reloader.stakater.com/auto: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - name: redis
+        image: redis:6.0.9-alpine
+        ports:
+        - containerPort: 6379
+          name: tcp
+        env:
+        - name: ALLOW_EMPTY_PASSWORD
+          value: "yes"
+
+        resources:
+          requests:
+            memory: "100Mi"
+            cpu: "200m"
+          limits:
+            memory: "150Mi"
+            cpu: "300m"
+        # imagePullPolicy: Always
+      restartPolicy: Always

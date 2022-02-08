@@ -1,0 +1,40 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8see-importer
+  namespace: default
+  annotations:
+    kubernetes.io/change-cause: Creation
+    reloader.stakater.com/auto: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: k8see-importer
+  template:
+    metadata:
+      labels:
+        app: k8see-importer
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - name: importer
+        image: sgaunet/k8see-importer:latest
+        ports:
+        - containerPort: 8081
+          name: http
+        envFrom:
+          - configMapRef:
+              name: cm-k8see-importer
+        resources:
+          requests:
+            memory: "40Mi"
+            cpu: "50m"
+          limits:
+            memory: "50Mi"
+            cpu: "100m"
+        imagePullPolicy: Always
+
+      restartPolicy: Always
+

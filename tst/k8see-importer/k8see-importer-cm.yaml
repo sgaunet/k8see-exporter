@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cm-k8see-importer
+  namespace: default
+data:
+  DBHOST: svc-postgres
+  DBPORT: "5432"
+  DBUSER: postgres
+  DBPASSWORD: password
+  DBNAME: mydb
+
+  REDIS_HOST: svc-redis
+  REDIS_PORT: "6379"
+  REDIS_STREAM: k8see-exporter
+
+  LOGLEVEL: "debug"

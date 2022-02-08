@@ -16,3 +16,7 @@ The 3 tools are :
 The image is : sgaunet/k8see-exporter:latest
 
 The manifests to deploy the application are in the deploy folder.
+
+# Development environment
+
+Read tst/README.md

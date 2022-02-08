@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cm-k8see-exporter
+  namespace: default
+data:
+  REDIS_HOST: svc-redis
+  REDIS_PORT: "6379"
+  # REDIS_PASSWORD: 
+  REDIS_STREAM: k8see-exporter
+  LOGLEVEL: "debug"  # info, warn,debug

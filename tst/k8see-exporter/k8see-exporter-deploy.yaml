@@ -1,0 +1,34 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8see-exporter
+  namespace: default
+  annotations:
+    kubernetes.io/change-cause: Creation
+    configmap.reloader.stakater.com/reload: "cm-k8see-exporter"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: k8see-exporter
+  template:
+    metadata:
+      labels:
+        app: k8see-exporter
+    spec:
+      serviceAccountName: k8see
+      containers:
+      - name: k8see-exporter
+        image: sgaunet/k8see-exporter:latest
+        envFrom:
+          - configMapRef:
+                name: cm-k8see-exporter
+        resources:
+          requests:
+            memory: "50Mi"
+            cpu: "40m"
+          limits:
+            memory: "55Mi"
+            cpu: "50m"
+        imagePullPolicy: Always

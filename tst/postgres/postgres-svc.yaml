@@ -1,0 +1,12 @@
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: svc-postgres
+  namespace: default
+spec:
+  selector:
+    app: postgres
+  ports:
+  # Default port used by the image
+  - port: 5432
