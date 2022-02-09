@@ -140,6 +140,7 @@ func main() {
 			log.Debugf("ADDED: eventTime=%s Type=%s Reason=%s Name=%s FirstTimestamp=%s Message=%s UID=%s\n", e.EventTime, e.Type, e.Reason, e.Name, e.FirstTimestamp, e.Message, e.UID)
 			eventTime := time.Unix(e.EventTime.ProtoMicroTime().Seconds, int64(e.EventTime.ProtoMicroTime().Nanos))
 			firstTime := time.Date(e.FirstTimestamp.Year(), e.FirstTimestamp.Month(), e.FirstTimestamp.Day(), e.FirstTimestamp.Hour(), e.FirstTimestamp.Minute(), e.FirstTimestamp.Second(), e.FirstTimestamp.Nanosecond(), e.FirstTimestamp.Location())
+			log.Debugf("eventTime=%s firstTime=%s", eventTime.String(), firstTime.String())
 			example := k8sEvent{
 				EventTime: eventTime.String(),
 				FirstTime: firstTime.String(),
@@ -195,7 +196,7 @@ func (a *appK8sEvents2Redis) InitProducer() {
 		},
 	})
 	if err != nil {
-		panic(err)
+		log.Errorln(err)
 	}
 }
 
@@ -213,6 +214,6 @@ func (a *appK8sEvents2Redis) Write2Stream(c k8sEvent) {
 		},
 	})
 	if err != nil {
-		panic(err)
+		log.Errorln(err)
 	}
 }
