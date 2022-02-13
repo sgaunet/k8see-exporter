@@ -23,13 +23,14 @@ import (
 
 type k8sEvent struct {
 	// e.FirstTimestamp, e.Type, e.Reason, e.Name, e.Message, e.UID
-	EventTime string `json:eventTime`
-	FirstTime string `json:firstTime`
-	Type      string `json: "type"`
-	Reason    string `json: "reason"`
-	Name      string `json: "name"`
-	Message   string `json: "message"`
-	Namespace string `json: "namespace"`
+	ExportedTime string `json:"exportedtime"`
+	EventTime    string `json:"eventTime"`
+	FirstTime    string `json:"firstTime"`
+	Type         string `json:"type"`
+	Reason       string `json:"reason"`
+	Name         string `json:"name"`
+	Message      string `json:"message"`
+	Namespace    string `json:"namespace"`
 }
 
 type appK8sEvents2Redis struct {
@@ -142,13 +143,14 @@ func main() {
 			firstTime := time.Date(e.FirstTimestamp.Year(), e.FirstTimestamp.Month(), e.FirstTimestamp.Day(), e.FirstTimestamp.Hour(), e.FirstTimestamp.Minute(), e.FirstTimestamp.Second(), e.FirstTimestamp.Nanosecond(), e.FirstTimestamp.Location())
 			log.Debugf("eventTime=%s firstTime=%s", eventTime.String(), firstTime.String())
 			example := k8sEvent{
-				EventTime: eventTime.String(),
-				FirstTime: firstTime.String(),
-				Type:      e.Type,
-				Reason:    e.Reason,
-				Name:      e.Name,
-				Message:   e.Message,
-				Namespace: e.Namespace,
+				ExportedTime: time.Now().Format("2006-01-02 15:04:05 -0700 MST"),
+				EventTime:    eventTime.String(),
+				FirstTime:    firstTime.String(),
+				Type:         e.Type,
+				Reason:       e.Reason,
+				Name:         e.Name,
+				Message:      e.Message,
+				Namespace:    e.Namespace,
 			}
 			app.Write2Stream(example)
 		},
@@ -204,13 +206,14 @@ func (a *appK8sEvents2Redis) Write2Stream(c k8sEvent) {
 	err := a.producer.Enqueue(&redisqueue.Message{
 		Stream: a.redisStream,
 		Values: map[string]interface{}{
-			"name":      c.Name,
-			"namespace": c.Namespace,
-			"reason":    c.Reason,
-			"type":      c.Type,
-			"message":   c.Message,
-			"eventTime": c.EventTime,
-			"firstTime": c.FirstTime,
+			"name":         c.Name,
+			"namespace":    c.Namespace,
+			"reason":       c.Reason,
+			"type":         c.Type,
+			"message":      c.Message,
+			"eventTime":    c.EventTime,
+			"firstTime":    c.FirstTime,
+			"exportedTime": c.ExportedTime,
 		},
 	})
 	if err != nil {
