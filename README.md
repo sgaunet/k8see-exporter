@@ -19,4 +19,4 @@ The manifests to deploy the application are in the deploy folder.
 
 # Development environment
 
-Read tst/README.md
+[The repository k8see-deploy](https://github.com/sgaunet/k8see-deploy) contains the whole procedure to deploy a full test environment in a k8s cluster (with kind). The repository contains also themanifests to deploy k8see-exporter.
