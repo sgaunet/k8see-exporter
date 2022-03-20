@@ -1,15 +1,13 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"time"
 
-	//v1 "k8s.io/api/events/v1"
 	"github.com/go-redis/redis/v7"
-	//"github.com/gomodule/redigo/redis"
-	"github.com/robinjoseph08/redisqueue/v2"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
@@ -38,7 +36,7 @@ type appK8sEvents2Redis struct {
 	redisPort     string
 	redisPassword string
 	redisStream   string
-	producer      *redisqueue.Producer
+	redisClient   *redis.Client
 }
 
 var log = logrus.New()
@@ -152,7 +150,10 @@ func main() {
 				Message:      e.Message,
 				Namespace:    e.Namespace,
 			}
-			app.Write2Stream(example)
+			err = app.Write2Stream(example)
+			if err != nil {
+				log.Errorln(err.Error())
+			}
 		},
 		// DeleteFunc: func(obj interface{}) {
 		// 	e := obj.(*v1.Event)
@@ -184,39 +185,54 @@ func NewApp(redisHost string, redisPort string, redisPassword string, redisStrea
 	return &app
 }
 
-func (a *appK8sEvents2Redis) InitProducer() {
+func (a *appK8sEvents2Redis) InitProducer() error {
 	var err error
 	addr := fmt.Sprintf("%s:%s", a.redisHost, a.redisPort)
-	a.producer, err = redisqueue.NewProducerWithOptions(&redisqueue.ProducerOptions{
-		//Name:                 "localhost",
-		StreamMaxLength:      1000,
-		ApproximateMaxLength: true,
-		RedisOptions: &redis.Options{
-			Addr:     addr,
-			Password: a.redisPassword,
-			DB:       0, // use default DB
-		},
+	a.redisClient = redis.NewClient(&redis.Options{
+		Addr: addr,
 	})
+	_, err = a.redisClient.Ping().Result()
 	if err != nil {
-		log.Errorln(err)
+		return err
 	}
+	log.Infoln("Connected to Redis server")
+	return nil
 }
 
-func (a *appK8sEvents2Redis) Write2Stream(c k8sEvent) {
-	err := a.producer.Enqueue(&redisqueue.Message{
-		Stream: a.redisStream,
-		Values: map[string]interface{}{
-			"name":         c.Name,
-			"namespace":    c.Namespace,
-			"reason":       c.Reason,
-			"type":         c.Type,
-			"message":      c.Message,
-			"eventTime":    c.EventTime,
-			"firstTime":    c.FirstTime,
-			"exportedTime": c.ExportedTime,
-		},
-	})
-	if err != nil {
-		log.Errorln(err)
+func (a *appK8sEvents2Redis) Write2Stream(c k8sEvent) (err error) {
+	const nbtry int = 2
+
+	for i := 0; i < nbtry; i++ {
+		err := a.redisClient.XAdd(&redis.XAddArgs{
+			Stream:       a.redisStream,
+			MaxLen:       0,
+			MaxLenApprox: 0,
+			ID:           "",
+			Values: map[string]interface{}{
+				"name":         c.Name,
+				"namespace":    c.Namespace,
+				"reason":       c.Reason,
+				"type":         c.Type,
+				"message":      c.Message,
+				"eventTime":    c.EventTime,
+				"firstTime":    c.FirstTime,
+				"exportedTime": c.ExportedTime,
+			},
+		}).Err()
+		if err != nil {
+			log.Errorln(err.Error())
+			a.InitProducer()
+		} else {
+			if i != 0 {
+				log.Infoln("XAdd error has been recovered")
+			}
+			break
+		}
 	}
+
+	if err != nil {
+		return errors.New("an event has not been written to the redis stream")
+	}
+
+	return err
 }
