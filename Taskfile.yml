@@ -1,0 +1,26 @@
+# https://taskfile.dev
+version: '3'
+
+vars:
+  BINFILE: k8see-exporter
+  IMG: sgaunet/k8see-exporter:latest
+
+tasks:
+  default:
+    cmds:
+      - go build .
+      - upx ./{{.BINFILE}}
+    # silent: true
+    method: checksum
+    generates:
+      - "{{.BINFILE}}"
+  image:
+    deps: 
+    - default
+    sources:
+      - ./{{.BINFILE}}
+      - Dockerfile
+    cmds:
+      - docker build . -t {{.IMG}}
+      - docker push {{.IMG}}
+    

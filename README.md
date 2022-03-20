@@ -20,3 +20,33 @@ The manifests to deploy the application are in [k8see-deploy](https://github.com
 # Development environment
 
 [The repository k8see-deploy](https://github.com/sgaunet/k8see-deploy) contains the whole procedure to deploy a full test environment in a k8s cluster (with kind). The repository contains also themanifests to deploy k8see-exporter.
+
+# Build
+
+This project is using :
+
+* golang 1.17+
+* [task for development](https://taskfile.dev/#/)
+* docker
+* [docker buildx](https://github.com/docker/buildx)
+* docker manifest
+* [goreleaser](https://goreleaser.com/)
+
+
+## Binary 
+
+```
+task
+```
+
+## Build the image
+
+```
+task image
+```
+
+# Make a release
+
+```
+task release
+```
