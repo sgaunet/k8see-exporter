@@ -25,3 +25,8 @@ tasks:
     cmds:
       - docker build . -t {{.IMG}}
       - docker push {{.IMG}}
+
+  snapshot:
+    cmds:
+      - GITLAB_TOKEN="" goreleaser --rm-dist --snapshot
+    
