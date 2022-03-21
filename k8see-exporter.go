@@ -66,24 +66,33 @@ func initTrace(debugLevel string) {
 }
 
 func main() {
+	var cfg YamlConfig
 	var fileConfigName string
+	var err error
+
 	flag.StringVar(&fileConfigName, "f", "", "YAML file to parse.")
 	flag.Parse()
-
 	initTrace(os.Getenv("LOGLEVEL"))
 
-	if fileConfigName == "" {
-		log.Fatal("No config file specified.")
-		os.Exit(1)
+	if fileConfigName != "" {
+		cfg, err = ReadyamlConfigFile(fileConfigName)
+		if err != nil {
+			log.Fatal(err)
+			os.Exit(1)
+		}
+	} else {
+		log.Infoln("No config file specified. Try to get configuration with environment variable")
+		cfg.RedisHost = os.Getenv("REDIS_HOST")
+		cfg.RedisPort = os.Getenv("REDIS_PORT")
+		cfg.RedisPassword = os.Getenv("REDIS_PASSWORD")
+		cfg.RedisStream = os.Getenv("REDIS_STREAM")
 	}
 
-	cfg, err := ReadyamlConfigFile(fileConfigName)
+	log.Debugf("cfg=%+v\n", cfg)
+	app, err := NewApp(cfg.RedisHost, cfg.RedisPort, cfg.RedisPassword, cfg.RedisStream)
 	if err != nil {
-		log.Fatal(err)
-		os.Exit(1)
+		log.Errorln(err.Error())
 	}
-
-	app := NewApp(cfg.RedisHost, cfg.RedisPort, cfg.RedisPassword, cfg.RedisStream)
 
 	// cmd := exec.Command("sh", "-c", "kubectl get events --watch")
 	// // stderr, err := cmd.StderrPipe()
@@ -109,7 +118,6 @@ func main() {
 	// log.Print("Server Exited Properly")
 
 	// https://medium.com/swlh/clientset-module-for-in-cluster-and-out-cluster-3f0d80af79ed
-
 	kubeconfig := ""
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
@@ -173,18 +181,18 @@ func main() {
 	}
 }
 
-func NewApp(redisHost string, redisPort string, redisPassword string, redisStream string) *appK8sEvents2Redis {
+// NewAPP is the factory, return an error if the connection to redis server failed
+func NewApp(redisHost string, redisPort string, redisPassword string, redisStream string) (*appK8sEvents2Redis, error) {
 	app := appK8sEvents2Redis{
 		redisHost:     redisHost,
 		redisPort:     redisPort,
 		redisPassword: redisPassword,
 		redisStream:   redisStream,
 	}
-
-	app.InitProducer()
-	return &app
+	return &app, app.InitProducer()
 }
 
+// InitProducer initialise redisClient and ensure that connection is ok
 func (a *appK8sEvents2Redis) InitProducer() error {
 	var err error
 	addr := fmt.Sprintf("%s:%s", a.redisHost, a.redisPort)
@@ -199,6 +207,7 @@ func (a *appK8sEvents2Redis) InitProducer() error {
 	return nil
 }
 
+// Write2Stream writes a kubernetes event to the redis stream
 func (a *appK8sEvents2Redis) Write2Stream(c k8sEvent) (err error) {
 	const nbtry int = 2
 
