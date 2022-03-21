@@ -22,6 +22,7 @@ tasks:
     sources:
       - ./{{.BINFILE}}
       - Dockerfile
+      - resources
     cmds:
       - docker build . -t {{.IMG}}
       - docker push {{.IMG}}

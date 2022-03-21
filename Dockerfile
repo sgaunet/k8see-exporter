@@ -14,6 +14,6 @@
 FROM scratch AS final
 WORKDIR /
 COPY k8see-exporter /k8see-exporter
-COPY resources/* /
+COPY resources /
 USER MyUser
 CMD [ "/k8see-exporter" ]
