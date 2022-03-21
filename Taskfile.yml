@@ -8,12 +8,14 @@ vars:
 tasks:
   default:
     cmds:
-      - go build .
+      - go mod tidy
+      - CGO_ENABLED=0 go build .
       - upx ./{{.BINFILE}}
     # silent: true
     method: checksum
     generates:
       - "{{.BINFILE}}"
+
   image:
     deps: 
     - default
@@ -23,4 +25,3 @@ tasks:
     cmds:
       - docker build . -t {{.IMG}}
       - docker push {{.IMG}}
-    
