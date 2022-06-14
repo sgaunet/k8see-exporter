@@ -33,4 +33,4 @@ tasks:
     
   release:
     cmds:
-      - GITLAB_TOKEN="" goreleaser --rm-dist
+      - GITLAB_TOKEN="" goreleaser release --rm-dist --timeout 60m
