@@ -94,29 +94,6 @@ func main() {
 		log.Errorln(err.Error())
 	}
 
-	// cmd := exec.Command("sh", "-c", "kubectl get events --watch")
-	// // stderr, err := cmd.StderrPipe()
-	// stdout, err := cmd.StdoutPipe()
-	// if err != nil {
-	// 	fmt.Println(err)
-	// }
-
-	// err = cmd.Start()
-	// fmt.Println("The command is running")
-	// if err != nil {
-	// 	fmt.Println(err)
-	// }
-
-	// // print the output of the subprocess
-	// scanner := bufio.NewScanner(stdout)
-	// for scanner.Scan() {
-	// 	m := scanner.Text()
-	// 	fmt.Println(m)
-	// }
-	// cmd.Wait()
-
-	// log.Print("Server Exited Properly")
-
 	// https://medium.com/swlh/clientset-module-for-in-cluster-and-out-cluster-3f0d80af79ed
 	kubeconfig := ""
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
@@ -136,14 +113,6 @@ func main() {
 	svcInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			e := obj.(*v1.Event)
-			// fmt.Printf("======: %s \n", reflect.TypeOf(obj))
-			// fmt.Printf("Reason: %s \n", e.Reason)
-			// fmt.Printf("EventTime: %v \n", e.EventTime)
-			// fmt.Printf("Message: %s \n", e.Message)
-			// fmt.Printf("Action: %s \n", e.Action)
-			// fmt.Printf("FirstTimestamp: %s \n", e.FirstTimestamp)
-			// fmt.Printf("Namespace: %s \n", e.Namespace)
-			// fmt.Printf("Name: %s \n", e.Name)
 			log.Debugf("ADDED: eventTime=%s Type=%s Reason=%s Name=%s FirstTimestamp=%s Message=%s UID=%s\n", e.EventTime, e.Type, e.Reason, e.Name, e.FirstTimestamp, e.Message, e.UID)
 			eventTime := time.Unix(e.EventTime.ProtoMicroTime().Seconds, int64(e.EventTime.ProtoMicroTime().Nanos))
 			firstTime := time.Date(e.FirstTimestamp.Year(), e.FirstTimestamp.Month(), e.FirstTimestamp.Day(), e.FirstTimestamp.Hour(), e.FirstTimestamp.Minute(), e.FirstTimestamp.Second(), e.FirstTimestamp.Nanosecond(), e.FirstTimestamp.Location())
