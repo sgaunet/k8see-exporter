@@ -1,13 +1,14 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"time"
 
-	"github.com/go-redis/redis/v7"
+	"github.com/redis/go-redis/v9"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
@@ -164,11 +165,12 @@ func NewApp(redisHost string, redisPort string, redisPassword string, redisStrea
 // InitProducer initialise redisClient and ensure that connection is ok
 func (a *appK8sEvents2Redis) InitProducer() error {
 	var err error
+	ctx := context.TODO()
 	addr := fmt.Sprintf("%s:%s", a.redisHost, a.redisPort)
 	a.redisClient = redis.NewClient(&redis.Options{
 		Addr: addr,
 	})
-	_, err = a.redisClient.Ping().Result()
+	_, err = a.redisClient.Ping(ctx).Result()
 	if err != nil {
 		return err
 	}
@@ -179,13 +181,13 @@ func (a *appK8sEvents2Redis) InitProducer() error {
 // Write2Stream writes a kubernetes event to the redis stream
 func (a *appK8sEvents2Redis) Write2Stream(c k8sEvent) (err error) {
 	const nbtry int = 2
+	ctx := context.TODO()
 
 	for i := 0; i < nbtry; i++ {
-		err := a.redisClient.XAdd(&redis.XAddArgs{
-			Stream:       a.redisStream,
-			MaxLen:       0,
-			MaxLenApprox: 0,
-			ID:           "",
+		err = a.redisClient.XAdd(ctx, &redis.XAddArgs{
+			Stream: a.redisStream,
+			MaxLen: 0,
+			ID:     "",
 			Values: map[string]interface{}{
 				"name":         c.Name,
 				"namespace":    c.Namespace,
