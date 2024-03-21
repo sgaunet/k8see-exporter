@@ -9,10 +9,11 @@ import (
 
 // Struct representing the yaml configuration file passed as a parameter to the program
 type YamlConfig struct {
-	RedisHost     string `yaml:"redis_host"`
-	RedisPort     string `yaml:"redis_port"`
-	RedisPassword string `yaml:"redis_password"`
-	RedisStream   string `yaml:"redis_stream"`
+	RedisHost            string `yaml:"redis_host"`
+	RedisPort            string `yaml:"redis_port"`
+	RedisPassword        string `yaml:"redis_password"`
+	RedisStream          string `yaml:"redis_stream"`
+	RedisStreamMaxLength int    `yaml:"redis_stream_maxlength"`
 }
 
 func ReadyamlConfigFile(filename string) (YamlConfig, error) {

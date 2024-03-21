@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -33,11 +34,12 @@ type k8sEvent struct {
 }
 
 type appK8sEvents2Redis struct {
-	redisHost     string
-	redisPort     string
-	redisPassword string
-	redisStream   string
-	redisClient   *redis.Client
+	redisHost            string
+	redisPort            string
+	redisPassword        string
+	redisStream          string
+	redisMaxStreamLength int
+	redisClient          *redis.Client
 }
 
 var log = logrus.New()
@@ -87,10 +89,20 @@ func main() {
 		cfg.RedisPort = os.Getenv("REDIS_PORT")
 		cfg.RedisPassword = os.Getenv("REDIS_PASSWORD")
 		cfg.RedisStream = os.Getenv("REDIS_STREAM")
+		maxStreamLength := os.Getenv("REDIS_STREAM_MAX_LENGTH")
+		if maxStreamLength == "" {
+			cfg.RedisStreamMaxLength = 5000
+		} else {
+			cfg.RedisStreamMaxLength, err = strconv.Atoi(maxStreamLength)
+			if err != nil {
+				log.Errorln(err)
+				os.Exit(1)
+			}
+		}
 	}
 
 	log.Debugf("cfg=%+v\n", cfg)
-	app, err := NewApp(cfg.RedisHost, cfg.RedisPort, cfg.RedisPassword, cfg.RedisStream)
+	app, err := NewApp(cfg)
 	if err != nil {
 		log.Errorln(err.Error())
 	}
@@ -152,12 +164,13 @@ func main() {
 }
 
 // NewAPP is the factory, return an error if the connection to redis server failed
-func NewApp(redisHost string, redisPort string, redisPassword string, redisStream string) (*appK8sEvents2Redis, error) {
+func NewApp(cfg YamlConfig) (*appK8sEvents2Redis, error) {
 	app := appK8sEvents2Redis{
-		redisHost:     redisHost,
-		redisPort:     redisPort,
-		redisPassword: redisPassword,
-		redisStream:   redisStream,
+		redisHost:            cfg.RedisHost,
+		redisPort:            cfg.RedisPort,
+		redisPassword:        cfg.RedisPassword,
+		redisStream:          cfg.RedisStream,
+		redisMaxStreamLength: cfg.RedisStreamMaxLength,
 	}
 	return &app, app.InitProducer()
 }
@@ -186,7 +199,7 @@ func (a *appK8sEvents2Redis) Write2Stream(c k8sEvent) (err error) {
 	for i := 0; i < nbtry; i++ {
 		err = a.redisClient.XAdd(ctx, &redis.XAddArgs{
 			Stream: a.redisStream,
-			MaxLen: 0,
+			MaxLen: int64(a.redisMaxStreamLength),
 			ID:     "",
 			Values: map[string]interface{}{
 				"name":         c.Name,
