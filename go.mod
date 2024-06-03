@@ -1,10 +1,10 @@
 module github.com/sgaunet/k8see-exporter
 
 go 1.22
-toolchain go1.22.2
+toolchain go1.22.3
 
 require (
-	github.com/redis/go-redis/v9 v9.5.1
+	github.com/redis/go-redis/v9 v9.5.2
 	github.com/sirupsen/logrus v1.9.3
 	gopkg.in/yaml.v2 v2.4.0
 	k8s.io/api v0.30.0
