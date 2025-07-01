@@ -9,7 +9,7 @@ require (
 	github.com/sirupsen/logrus v1.9.3
 	gopkg.in/yaml.v2 v2.4.0
 	k8s.io/api v0.33.2
-	k8s.io/client-go v0.33.1
+	k8s.io/client-go v0.33.2
 )
 
 require (
