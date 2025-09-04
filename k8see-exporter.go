@@ -38,7 +38,8 @@ type k8sEvent struct {
 	Namespace    string `json:"namespace"`
 }
 
-type appK8sEvents2Redis struct {
+// AppK8sEvents2Redis handles the export of Kubernetes events to Redis.
+type AppK8sEvents2Redis struct {
 	redisHost            string
 	redisPort            string
 	redisPassword        string
@@ -107,7 +108,7 @@ func loadConfiguration(fileConfigName string) YamlConfig {
 	return cfg
 }
 
-func setupEventHandler(factory kubeinformers.SharedInformerFactory, app *appK8sEvents2Redis) {
+func setupEventHandler(factory kubeinformers.SharedInformerFactory, app *AppK8sEvents2Redis) {
 	// https://pkg.go.dev/k8s.io/api/events/v1#Event
 	svcInformer := factory.Core().V1().Events().Informer()
 	
@@ -190,8 +191,8 @@ func main() {
 }
 
 // NewApp is the factory, return an error if the connection to redis server failed.
-func NewApp(cfg YamlConfig) (*appK8sEvents2Redis, error) {
-	app := appK8sEvents2Redis{
+func NewApp(cfg YamlConfig) (*AppK8sEvents2Redis, error) {
+	app := AppK8sEvents2Redis{
 		redisHost:            cfg.RedisHost,
 		redisPort:            cfg.RedisPort,
 		redisPassword:        cfg.RedisPassword,
@@ -202,7 +203,7 @@ func NewApp(cfg YamlConfig) (*appK8sEvents2Redis, error) {
 }
 
 // InitProducer initialise redisClient and ensure that connection is ok.
-func (a *appK8sEvents2Redis) InitProducer() error {
+func (a *AppK8sEvents2Redis) InitProducer() error {
 	var err error
 	ctx := context.TODO()
 	addr := fmt.Sprintf("%s:%s", a.redisHost, a.redisPort)
@@ -218,7 +219,7 @@ func (a *appK8sEvents2Redis) InitProducer() error {
 }
 
 // Write2Stream writes a kubernetes event to the redis stream.
-func (a *appK8sEvents2Redis) Write2Stream(c k8sEvent) error {
+func (a *AppK8sEvents2Redis) Write2Stream(c k8sEvent) error {
 	const nbtry int = 2
 	ctx := context.TODO()
 	var err error

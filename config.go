@@ -17,6 +17,7 @@ type YamlConfig struct {
 	RedisStreamMaxLength int    `yaml:"redis_stream_maxlength"`
 }
 
+// ReadyamlConfigFile reads and parses a YAML configuration file.
 func ReadyamlConfigFile(filename string) (YamlConfig, error) {
 	var yamlConfig YamlConfig
 
