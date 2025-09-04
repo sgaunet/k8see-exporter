@@ -21,6 +21,11 @@ import (
 
 // https://pkg.go.dev/k8s.io/client-go/kubernetes
 
+const (
+	// informerResyncInterval is the interval at which the informer will resync.
+	informerResyncInterval = 30 * time.Second
+)
+
 type k8sEvent struct {
 	// e.FirstTimestamp, e.Type, e.Reason, e.Name, e.Message, e.UID
 	ExportedTime string `json:"exportedtime"`
@@ -42,12 +47,16 @@ type appK8sEvents2Redis struct {
 	redisClient          *redis.Client
 }
 
-var log = logrus.New()
-var version = "development"
+var (
+	log = logrus.New()
+	version = "development"
+	// ErrEventNotWritten is returned when an event could not be written to Redis stream.
+	errEventNotWritten = errors.New("an event has not been written to the redis stream")
+)
 
 func initTrace(debugLevel string) {
 	// Log as JSON instead of the default ASCII formatter.
-	//log.SetFormatter(&log.JSONFormatter{})
+	// log.SetFormatter(&log.JSONFormatter{})
 	// log.SetFormatter(&log.TextFormatter{
 	// 	DisableColors: true,
 	// 	FullTimestamp: true,
@@ -69,8 +78,72 @@ func initTrace(debugLevel string) {
 	}
 }
 
-func main() {
+func loadConfiguration(fileConfigName string) YamlConfig {
 	var cfg YamlConfig
+	var err error
+	
+	if fileConfigName != "" {
+		cfg, err = ReadyamlConfigFile(fileConfigName)
+		if err != nil {
+			log.Fatal(err)
+		}
+		return cfg
+	}
+	
+	log.Infoln("No config file specified. Try to get configuration with environment variable")
+	cfg.RedisHost = os.Getenv("REDIS_HOST")
+	cfg.RedisPort = os.Getenv("REDIS_PORT")
+	cfg.RedisPassword = os.Getenv("REDIS_PASSWORD")
+	cfg.RedisStream = os.Getenv("REDIS_STREAM")
+	maxStreamLength := os.Getenv("REDIS_STREAM_MAX_LENGTH")
+	if maxStreamLength == "" {
+		cfg.RedisStreamMaxLength = 5000
+	} else {
+		cfg.RedisStreamMaxLength, err = strconv.Atoi(maxStreamLength)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	return cfg
+}
+
+func setupEventHandler(factory kubeinformers.SharedInformerFactory, app *appK8sEvents2Redis) {
+	// https://pkg.go.dev/k8s.io/api/events/v1#Event
+	svcInformer := factory.Core().V1().Events().Informer()
+	
+	_, _ = svcInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			e, ok := obj.(*v1.Event)
+			if !ok {
+				log.Errorln("Failed to cast object to v1.Event")
+				return
+			}
+			log.Debugf("ADDED: eventTime=%s Type=%s Reason=%s Name=%s FirstTimestamp=%s Message=%s UID=%s\n",
+				e.EventTime, e.Type, e.Reason, e.Name, e.FirstTimestamp, e.Message, e.UID)
+			eventTime := time.Unix(e.EventTime.ProtoMicroTime().Seconds, int64(e.EventTime.ProtoMicroTime().Nanos))
+			firstTime := time.Date(e.FirstTimestamp.Year(), e.FirstTimestamp.Month(), e.FirstTimestamp.Day(),
+				e.FirstTimestamp.Hour(), e.FirstTimestamp.Minute(), e.FirstTimestamp.Second(),
+				e.FirstTimestamp.Nanosecond(), e.FirstTimestamp.Location())
+			log.Debugf("eventTime=%s firstTime=%s", eventTime.String(), firstTime.String())
+			example := k8sEvent{
+				ExportedTime: time.Now().Format("2006-01-02 15:04:05 -0700 MST"),
+				EventTime:    eventTime.String(),
+				FirstTime:    firstTime.String(),
+				Type:         e.Type,
+				Reason:       e.Reason,
+				Name:         e.Name,
+				Message:      e.Message,
+				Namespace:    e.Namespace,
+			}
+			err := app.Write2Stream(example)
+			if err != nil {
+				log.Errorln(err.Error())
+			}
+		},
+	})
+}
+
+func main() {
 	var fileConfigName string
 	var showVersion bool
 	var err error
@@ -85,30 +158,7 @@ func main() {
 	}
 	
 	initTrace(os.Getenv("LOGLEVEL"))
-
-	if fileConfigName != "" {
-		cfg, err = ReadyamlConfigFile(fileConfigName)
-		if err != nil {
-			log.Fatal(err)
-			os.Exit(1)
-		}
-	} else {
-		log.Infoln("No config file specified. Try to get configuration with environment variable")
-		cfg.RedisHost = os.Getenv("REDIS_HOST")
-		cfg.RedisPort = os.Getenv("REDIS_PORT")
-		cfg.RedisPassword = os.Getenv("REDIS_PASSWORD")
-		cfg.RedisStream = os.Getenv("REDIS_STREAM")
-		maxStreamLength := os.Getenv("REDIS_STREAM_MAX_LENGTH")
-		if maxStreamLength == "" {
-			cfg.RedisStreamMaxLength = 5000
-		} else {
-			cfg.RedisStreamMaxLength, err = strconv.Atoi(maxStreamLength)
-			if err != nil {
-				log.Errorln(err)
-				os.Exit(1)
-			}
-		}
-	}
+	cfg := loadConfiguration(fileConfigName)
 
 	log.Debugf("cfg=%+v\n", cfg)
 	app, err := NewApp(cfg)
@@ -128,41 +178,8 @@ func main() {
 		panic(err.Error())
 	}
 
-	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(clientset, time.Second*30)
-	// https://pkg.go.dev/k8s.io/api/events/v1#Event
-	svcInformer := kubeInformerFactory.Core().V1().Events().Informer()
-
-	svcInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			e := obj.(*v1.Event)
-			log.Debugf("ADDED: eventTime=%s Type=%s Reason=%s Name=%s FirstTimestamp=%s Message=%s UID=%s\n", e.EventTime, e.Type, e.Reason, e.Name, e.FirstTimestamp, e.Message, e.UID)
-			eventTime := time.Unix(e.EventTime.ProtoMicroTime().Seconds, int64(e.EventTime.ProtoMicroTime().Nanos))
-			firstTime := time.Date(e.FirstTimestamp.Year(), e.FirstTimestamp.Month(), e.FirstTimestamp.Day(), e.FirstTimestamp.Hour(), e.FirstTimestamp.Minute(), e.FirstTimestamp.Second(), e.FirstTimestamp.Nanosecond(), e.FirstTimestamp.Location())
-			log.Debugf("eventTime=%s firstTime=%s", eventTime.String(), firstTime.String())
-			example := k8sEvent{
-				ExportedTime: time.Now().Format("2006-01-02 15:04:05 -0700 MST"),
-				EventTime:    eventTime.String(),
-				FirstTime:    firstTime.String(),
-				Type:         e.Type,
-				Reason:       e.Reason,
-				Name:         e.Name,
-				Message:      e.Message,
-				Namespace:    e.Namespace,
-			}
-			err = app.Write2Stream(example)
-			if err != nil {
-				log.Errorln(err.Error())
-			}
-		},
-		// DeleteFunc: func(obj interface{}) {
-		// 	e := obj.(*v1.Event)
-		// 	log.Infof("DELETED: %s %s %s %s %s\n", e.FirstTimestamp, e.Type, e.Reason, e.Name, e.Message)
-		// },
-		// UpdateFunc: func(oldObj, newObj interface{}) {
-		// 	e := newObj.(*v1.Event)
-		// 	log.Infof("UPDATED: %s %s %s %s %s\n", e.FirstTimestamp, e.Type, e.Reason, e.Name, e.Message)
-		// },
-	})
+	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(clientset, informerResyncInterval)
+	setupEventHandler(kubeInformerFactory, app)
 
 	stop := make(chan struct{})
 	defer close(stop)
@@ -172,7 +189,7 @@ func main() {
 	}
 }
 
-// NewAPP is the factory, return an error if the connection to redis server failed
+// NewApp is the factory, return an error if the connection to redis server failed.
 func NewApp(cfg YamlConfig) (*appK8sEvents2Redis, error) {
 	app := appK8sEvents2Redis{
 		redisHost:            cfg.RedisHost,
@@ -184,7 +201,7 @@ func NewApp(cfg YamlConfig) (*appK8sEvents2Redis, error) {
 	return &app, app.InitProducer()
 }
 
-// InitProducer initialise redisClient and ensure that connection is ok
+// InitProducer initialise redisClient and ensure that connection is ok.
 func (a *appK8sEvents2Redis) InitProducer() error {
 	var err error
 	ctx := context.TODO()
@@ -194,18 +211,19 @@ func (a *appK8sEvents2Redis) InitProducer() error {
 	})
 	_, err = a.redisClient.Ping(ctx).Result()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to ping Redis server: %w", err)
 	}
 	log.Infoln("Connected to Redis server")
 	return nil
 }
 
-// Write2Stream writes a kubernetes event to the redis stream
-func (a *appK8sEvents2Redis) Write2Stream(c k8sEvent) (err error) {
+// Write2Stream writes a kubernetes event to the redis stream.
+func (a *appK8sEvents2Redis) Write2Stream(c k8sEvent) error {
 	const nbtry int = 2
 	ctx := context.TODO()
+	var err error
 
-	for i := 0; i < nbtry; i++ {
+	for i := range nbtry {
 		err = a.redisClient.XAdd(ctx, &redis.XAddArgs{
 			Stream: a.redisStream,
 			MaxLen: int64(a.redisMaxStreamLength),
@@ -223,7 +241,9 @@ func (a *appK8sEvents2Redis) Write2Stream(c k8sEvent) (err error) {
 		}).Err()
 		if err != nil {
 			log.Errorln(err.Error())
-			a.InitProducer()
+			if err := a.InitProducer(); err != nil {
+				log.Errorln("Failed to reinitialize producer:", err)
+			}
 		} else {
 			if i != 0 {
 				log.Infoln("XAdd error has been recovered")
@@ -233,8 +253,8 @@ func (a *appK8sEvents2Redis) Write2Stream(c k8sEvent) (err error) {
 	}
 
 	if err != nil {
-		return errors.New("an event has not been written to the redis stream")
+		return errEventNotWritten
 	}
 
-	return err
+	return nil
 }
