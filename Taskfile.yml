@@ -44,4 +44,4 @@ tasks:
   release:
     desc: "Create a release"
     cmds:
-      - GITLAB_TOKEN="" goreleaser release --rm-dist --timeout 60m
+      - GITLAB_TOKEN="" goreleaser release --clean --timeout 60m
