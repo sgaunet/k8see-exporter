@@ -3,7 +3,7 @@ version: '3'
 
 vars:
   BINFILE: k8see-exporter
-  IMG: sgaunet/k8see-exporter:latest
+  IMG: ghcr.io/sgaunet/k8see-exporter:latest
 
 includes:
   dev: ./Taskfile_dev.yml
