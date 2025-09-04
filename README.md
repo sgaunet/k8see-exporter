@@ -2,6 +2,10 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/sgaunet/k8see-exporter)](https://goreportcard.com/report/github.com/sgaunet/k8see-exporter)
 ![GitHub Downloads](https://img.shields.io/github/downloads/sgaunet/k8see-exporter/total)
 ![Coverage Badge](https://raw.githubusercontent.com/wiki/sgaunet/k8see-exporter/coverage-badge.svg)
+[![linter](https://github.com/sgaunet/k8see-exporter/actions/workflows/coverage.yml/badge.svg)](https://github.com/sgaunet/k8see-exporter/actions/workflows/coverage.yml)
+[![coverage](https://github.com/sgaunet/k8see-exporter/actions/workflows/coverage.yml/badge.svg)](https://github.com/sgaunet/k8see-exporter/actions/workflows/coverage.yml)
+[![Snapshot Build](https://github.com/sgaunet/k8see-exporter/actions/workflows/snapshot.yml/badge.svg)](https://github.com/sgaunet/k8see-exporter/actions/workflows/snapshot.yml)
+[![Release Build](https://github.com/sgaunet/k8see-exporter/actions/workflows/release.yml/badge.svg)](https://github.com/sgaunet/k8see-exporter/actions/workflows/release.yml)
 [![License](https://img.shields.io/github/license/sgaunet/k8see-exporter.svg)](LICENSE)
 
 # k8see (Kubernetes Events Exporter)
