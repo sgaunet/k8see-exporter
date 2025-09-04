@@ -21,7 +21,7 @@ The 3 tools are :
 
 # k8see-exporter
 
-The image is on docker hub: sgaunet/k8see-exporter:**version**
+The image is available on GitHub Container Registry: ghcr.io/sgaunet/k8see-exporter:**version**
 
 The manifests to deploy the application are in [k8see-deploy](https://github.com/sgaunet/k8see-deploy/tree/main/manifests/k8see-exporter)
 
