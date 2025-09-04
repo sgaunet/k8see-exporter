@@ -43,6 +43,7 @@ type appK8sEvents2Redis struct {
 }
 
 var log = logrus.New()
+var version = "development"
 
 func initTrace(debugLevel string) {
 	// Log as JSON instead of the default ASCII formatter.
@@ -71,10 +72,18 @@ func initTrace(debugLevel string) {
 func main() {
 	var cfg YamlConfig
 	var fileConfigName string
+	var showVersion bool
 	var err error
 
 	flag.StringVar(&fileConfigName, "f", "", "YAML file to parse.")
+	flag.BoolVar(&showVersion, "v", false, "Print version and exit.")
 	flag.Parse()
+	
+	if showVersion {
+		fmt.Println(version)
+		os.Exit(0)
+	}
+	
 	initTrace(os.Getenv("LOGLEVEL"))
 
 	if fileConfigName != "" {
