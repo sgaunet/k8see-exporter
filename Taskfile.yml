@@ -44,4 +44,4 @@ tasks:
   release:
     desc: "Create a release"
     cmds:
-      - GITLAB_TOKEN="" goreleaser release --clean --skip validate
+      - GITLAB_TOKEN="" goreleaser release --clean
