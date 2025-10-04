@@ -27,13 +27,9 @@ tasks:
   image:
     desc: "Build and push the image"
     deps: 
-    - build
-    sources:
-      - ./{{.BINFILE}}
-      - Dockerfile
-      - resources
+    - snapshot
     cmds:
-      - docker build . -t {{.IMG}}
+      - docker tag ghcr.io/sgaunet/k8see-exporter:latest-amd64 {{.IMG}}
       - docker push {{.IMG}}
 
   snapshot:

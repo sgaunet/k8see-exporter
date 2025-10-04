@@ -109,6 +109,9 @@ docker_manifests:
       - ghcr.io/sgaunet/{{ .ProjectName }}:latest-armv6
       - ghcr.io/sgaunet/{{ .ProjectName }}:latest-armv7
 
+snapshot:
+  name_template: "latest"
+
 changelog:
   sort: asc
   filters:
