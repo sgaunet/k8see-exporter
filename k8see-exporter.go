@@ -58,15 +58,6 @@ var (
 )
 
 func initTrace(debugLevel string) {
-	// Log as JSON instead of the default ASCII formatter.
-	// log.SetFormatter(&log.JSONFormatter{})
-	// log.SetFormatter(&log.TextFormatter{
-	// 	DisableColors: true,
-	// 	FullTimestamp: true,
-	// })
-
-	// Output to stdout instead of the default stderr
-	// Can be any io.Writer, see below for File example
 	log.SetOutput(os.Stdout)
 
 	switch debugLevel {
@@ -86,7 +77,7 @@ func loadConfiguration(fileConfigName string) YamlConfig {
 	var err error
 	
 	if fileConfigName != "" {
-		cfg, err = ReadyamlConfigFile(fileConfigName)
+		cfg, err = ReadYAMLConfigFile(fileConfigName)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -110,11 +101,11 @@ func loadConfiguration(fileConfigName string) YamlConfig {
 	return cfg
 }
 
-func setupEventHandler(factory kubeinformers.SharedInformerFactory, app *AppK8sEvents2Redis) {
+func setupEventHandler(factory kubeinformers.SharedInformerFactory, app *AppK8sEvents2Redis) error {
 	// https://pkg.go.dev/k8s.io/api/events/v1#Event
 	svcInformer := factory.Core().V1().Events().Informer()
-	
-	_, _ = svcInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+
+	_, err := svcInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			e, ok := obj.(*v1.Event)
 			if !ok {
@@ -124,9 +115,7 @@ func setupEventHandler(factory kubeinformers.SharedInformerFactory, app *AppK8sE
 			log.Debugf("ADDED: eventTime=%s Type=%s Reason=%s Name=%s FirstTimestamp=%s Message=%s UID=%s\n",
 				e.EventTime, e.Type, e.Reason, e.Name, e.FirstTimestamp, e.Message, e.UID)
 			eventTime := time.Unix(e.EventTime.ProtoMicroTime().Seconds, int64(e.EventTime.ProtoMicroTime().Nanos))
-			firstTime := time.Date(e.FirstTimestamp.Year(), e.FirstTimestamp.Month(), e.FirstTimestamp.Day(),
-				e.FirstTimestamp.Hour(), e.FirstTimestamp.Minute(), e.FirstTimestamp.Second(),
-				e.FirstTimestamp.Nanosecond(), e.FirstTimestamp.Location())
+			firstTime := e.FirstTimestamp.Time
 			log.Debugf("eventTime=%s firstTime=%s", eventTime.String(), firstTime.String())
 			example := k8sEvent{
 				ExportedTime: time.Now().Format("2006-01-02 15:04:05 -0700 MST"),
@@ -144,6 +133,10 @@ func setupEventHandler(factory kubeinformers.SharedInformerFactory, app *AppK8sE
 			}
 		},
 	})
+	if err != nil {
+		return fmt.Errorf("failed to add event handler: %w", err)
+	}
+	return nil
 }
 
 func main() {
@@ -181,7 +174,9 @@ func main() {
 	}
 
 	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(clientset, informerResyncInterval)
-	setupEventHandler(kubeInformerFactory, app)
+	if err := setupEventHandler(kubeInformerFactory, app); err != nil {
+		log.Fatalf("Failed to setup event handler: %v", err)
+	}
 
 	stop := make(chan struct{})
 	defer close(stop)
