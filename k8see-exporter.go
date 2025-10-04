@@ -173,12 +173,11 @@ func main() {
 	kubeconfig := ""
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
-		panic(err.Error())
+		log.Fatalf("Failed to build Kubernetes config: %v", err)
 	}
 	clientset, err := kubernetes.NewForConfig(config)
-	// clientset, err := kubernetes.NewForConfig()
 	if err != nil {
-		panic(err.Error())
+		log.Fatalf("Failed to create Kubernetes client: %v", err)
 	}
 
 	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(clientset, informerResyncInterval)
