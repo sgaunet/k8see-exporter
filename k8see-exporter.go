@@ -208,7 +208,8 @@ func (a *AppK8sEvents2Redis) InitProducer() error {
 	ctx := context.TODO()
 	addr := fmt.Sprintf("%s:%s", a.redisHost, a.redisPort)
 	a.redisClient = redis.NewClient(&redis.Options{
-		Addr: addr,
+		Addr:     addr,
+		Password: a.redisPassword,
 	})
 	_, err = a.redisClient.Ping(ctx).Result()
 	if err != nil {
