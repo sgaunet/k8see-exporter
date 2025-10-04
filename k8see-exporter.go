@@ -26,10 +26,16 @@ import (
 const (
 	// informerResyncInterval is the interval at which the informer will resync.
 	informerResyncInterval = 30 * time.Second
+	// defaultRedisStreamMaxLength is the default maximum length of the Redis stream.
+	defaultRedisStreamMaxLength = 5000
+	// redisRetryAttempts is the number of retry attempts for Redis operations.
+	redisRetryAttempts = 2
+	// redisOperationTimeout is the timeout for Redis operations.
+	redisOperationTimeout = 5 * time.Second
 )
 
-type k8sEvent struct {
-	// e.FirstTimestamp, e.Type, e.Reason, e.Name, e.Message, e.UID
+// Event represents a Kubernetes event to be exported to Redis.
+type Event struct {
 	ExportedTime string `json:"exportedtime"`
 	EventTime    string `json:"eventTime"`
 	FirstTime    string `json:"firstTime"`
@@ -91,21 +97,24 @@ func loadConfiguration(fileConfigName string) YamlConfig {
 	cfg.RedisStream = os.Getenv("REDIS_STREAM")
 	maxStreamLength := os.Getenv("REDIS_STREAM_MAX_LENGTH")
 	if maxStreamLength == "" {
-		cfg.RedisStreamMaxLength = 5000
+		cfg.RedisStreamMaxLength = defaultRedisStreamMaxLength
 	} else {
 		cfg.RedisStreamMaxLength, err = strconv.Atoi(maxStreamLength)
 		if err != nil {
 			log.Fatal(err)
 		}
 	}
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("Configuration validation failed: %v", err)
+	}
 	return cfg
 }
 
 func setupEventHandler(factory kubeinformers.SharedInformerFactory, app *AppK8sEvents2Redis) error {
 	// https://pkg.go.dev/k8s.io/api/events/v1#Event
-	svcInformer := factory.Core().V1().Events().Informer()
+	eventInformer := factory.Core().V1().Events().Informer()
 
-	_, err := svcInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err := eventInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			e, ok := obj.(*v1.Event)
 			if !ok {
@@ -117,17 +126,17 @@ func setupEventHandler(factory kubeinformers.SharedInformerFactory, app *AppK8sE
 			eventTime := time.Unix(e.EventTime.ProtoMicroTime().Seconds, int64(e.EventTime.ProtoMicroTime().Nanos))
 			firstTime := e.FirstTimestamp.Time
 			log.Debugf("eventTime=%s firstTime=%s", eventTime.String(), firstTime.String())
-			example := k8sEvent{
-				ExportedTime: time.Now().Format("2006-01-02 15:04:05 -0700 MST"),
-				EventTime:    eventTime.String(),
-				FirstTime:    firstTime.String(),
+			event := Event{
+				ExportedTime: time.Now().Format(time.RFC3339),
+				EventTime:    eventTime.Format(time.RFC3339),
+				FirstTime:    firstTime.Format(time.RFC3339),
 				Type:         e.Type,
 				Reason:       e.Reason,
 				Name:         e.Name,
 				Message:      e.Message,
 				Namespace:    e.Namespace,
 			}
-			err := app.Write2Stream(example)
+			err := app.Write2Stream(event)
 			if err != nil {
 				log.Errorln(err.Error())
 			}
@@ -179,8 +188,17 @@ func main() {
 	}
 
 	stop := make(chan struct{})
-	defer close(stop)
 	kubeInformerFactory.Start(stop)
+
+	// Wait for cache sync
+	log.Infoln("Waiting for informer cache to sync...")
+	if !cache.WaitForCacheSync(stop, kubeInformerFactory.Core().V1().Events().Informer().HasSynced) {
+		close(stop)
+		log.Fatal("Failed to sync informer cache")
+	}
+	log.Infoln("Informer cache synced successfully")
+
+	defer close(stop)
 
 	// Setup signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
@@ -189,6 +207,11 @@ func main() {
 	log.Infoln("k8see-exporter started. Press Ctrl+C to stop.")
 	<-sigChan
 	log.Infoln("Received shutdown signal. Shutting down gracefully...")
+
+	// Cleanup Redis connection
+	if err := app.Close(); err != nil {
+		log.Errorf("Error closing Redis connection: %v", err)
+	}
 }
 
 // NewApp is the factory, return an error if the connection to redis server failed.
@@ -205,14 +228,15 @@ func NewApp(cfg YamlConfig) (*AppK8sEvents2Redis, error) {
 
 // InitProducer initialise redisClient and ensure that connection is ok.
 func (a *AppK8sEvents2Redis) InitProducer() error {
-	var err error
-	ctx := context.TODO()
+	ctx, cancel := context.WithTimeout(context.Background(), redisOperationTimeout)
+	defer cancel()
+
 	addr := fmt.Sprintf("%s:%s", a.redisHost, a.redisPort)
 	a.redisClient = redis.NewClient(&redis.Options{
 		Addr:     addr,
 		Password: a.redisPassword,
 	})
-	_, err = a.redisClient.Ping(ctx).Result()
+	_, err := a.redisClient.Ping(ctx).Result()
 	if err != nil {
 		return fmt.Errorf("failed to ping Redis server: %w", err)
 	}
@@ -220,13 +244,24 @@ func (a *AppK8sEvents2Redis) InitProducer() error {
 	return nil
 }
 
+// Close closes the Redis client connection.
+func (a *AppK8sEvents2Redis) Close() error {
+	if a.redisClient != nil {
+		if err := a.redisClient.Close(); err != nil {
+			return fmt.Errorf("failed to close Redis client: %w", err)
+		}
+	}
+	return nil
+}
+
 // Write2Stream writes a kubernetes event to the redis stream.
-func (a *AppK8sEvents2Redis) Write2Stream(c k8sEvent) error {
-	const nbtry int = 2
-	ctx := context.TODO()
+func (a *AppK8sEvents2Redis) Write2Stream(c Event) error {
+	ctx, cancel := context.WithTimeout(context.Background(), redisOperationTimeout)
+	defer cancel()
+
 	var err error
 
-	for i := range nbtry {
+	for i := range redisRetryAttempts {
 		err = a.redisClient.XAdd(ctx, &redis.XAddArgs{
 			Stream: a.redisStream,
 			MaxLen: int64(a.redisMaxStreamLength),
@@ -243,21 +278,18 @@ func (a *AppK8sEvents2Redis) Write2Stream(c k8sEvent) error {
 			},
 		}).Err()
 		if err != nil {
-			log.Errorln(err.Error())
-			if err := a.InitProducer(); err != nil {
-				log.Errorln("Failed to reinitialize producer:", err)
+			log.Errorf("Failed to write event to Redis (attempt %d/%d): %v", i+1, redisRetryAttempts, err)
+			if reinitErr := a.InitProducer(); reinitErr != nil {
+				log.Errorf("Failed to reinitialize Redis connection: %v", reinitErr)
+				return fmt.Errorf("redis write failed and reconnection failed: %w", err)
 			}
 		} else {
 			if i != 0 {
 				log.Infoln("XAdd error has been recovered")
 			}
-			break
+			return nil
 		}
 	}
 
-	if err != nil {
-		return errEventNotWritten
-	}
-
-	return nil
+	return fmt.Errorf("%w: %w", errEventNotWritten, err)
 }

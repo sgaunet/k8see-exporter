@@ -5,7 +5,18 @@ import (
 	"fmt"
 	"os"
 
+	"errors"
+
 	"gopkg.in/yaml.v2"
+)
+
+var (
+	// ErrRedisHostRequired is returned when redis_host is not configured.
+	ErrRedisHostRequired = errors.New("redis_host is required")
+	// ErrRedisPortRequired is returned when redis_port is not configured.
+	ErrRedisPortRequired = errors.New("redis_port is required")
+	// ErrRedisStreamRequired is returned when redis_stream is not configured.
+	ErrRedisStreamRequired = errors.New("redis_stream is required")
 )
 
 // YamlConfig struct representing the yaml configuration file passed as a parameter to the program.
@@ -33,5 +44,23 @@ func ReadYAMLConfigFile(filename string) (YamlConfig, error) {
 		return yamlConfig, fmt.Errorf("failed to parse YAML: %w", err)
 	}
 
+	if err := yamlConfig.Validate(); err != nil {
+		return yamlConfig, fmt.Errorf("invalid configuration: %w", err)
+	}
+
 	return yamlConfig, nil
+}
+
+// Validate checks that required configuration fields are set.
+func (c *YamlConfig) Validate() error {
+	if c.RedisHost == "" {
+		return ErrRedisHostRequired
+	}
+	if c.RedisPort == "" {
+		return ErrRedisPortRequired
+	}
+	if c.RedisStream == "" {
+		return ErrRedisStreamRequired
+	}
+	return nil
 }
