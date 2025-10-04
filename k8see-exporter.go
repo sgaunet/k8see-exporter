@@ -164,7 +164,7 @@ func main() {
 	log.Debugf("cfg=%+v\n", cfg)
 	app, err := NewApp(cfg)
 	if err != nil {
-		log.Errorln(err.Error())
+		log.Fatalf("Failed to initialize application: %v", err)
 	}
 
 	// https://medium.com/swlh/clientset-module-for-in-cluster-and-out-cluster-3f0d80af79ed
