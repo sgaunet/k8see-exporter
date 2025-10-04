@@ -6,7 +6,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -185,9 +187,14 @@ func main() {
 	stop := make(chan struct{})
 	defer close(stop)
 	kubeInformerFactory.Start(stop)
-	for {
-		time.Sleep(time.Second)
-	}
+
+	// Setup signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	log.Infoln("k8see-exporter started. Press Ctrl+C to stop.")
+	<-sigChan
+	log.Infoln("Received shutdown signal. Shutting down gracefully...")
 }
 
 // NewApp is the factory, return an error if the connection to redis server failed.
