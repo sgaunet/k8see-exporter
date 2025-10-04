@@ -23,7 +23,12 @@ The 3 tools are :
 
 The image is available on GitHub Container Registry: ghcr.io/sgaunet/k8see-exporter:**version**
 
-The manifests to deploy the application are in [k8see-deploy](https://github.com/sgaunet/k8see-deploy/tree/main/manifests/k8see-exporter)
+## Deployment
+
+The application can be deployed using:
+
+* **Helm Chart**: [helm-k8see](https://github.com/sgaunet/helm-k8see/)
+* **Kubernetes Manifests**: [k8see-deploy](https://github.com/sgaunet/k8see-deploy/tree/main/manifests/k8see-exporter)
 
 # Development environment
 
