@@ -14,7 +14,7 @@ tasks:
     cmds:
       - task -a
 
-  linter:
+  lint:
     desc: "Run linters"
     cmds:
       - golangci-lint run
