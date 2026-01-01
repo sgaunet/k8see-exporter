@@ -57,7 +57,7 @@ type AppK8sEvents2Redis struct {
 }
 
 var (
-	log = logrus.New()
+	log     = logrus.New()
 	version = "development"
 	// ErrEventNotWritten is returned when an event could not be written to Redis stream.
 	errEventNotWritten = errors.New("an event has not been written to the redis stream")
@@ -81,7 +81,7 @@ func initTrace(debugLevel string) {
 func loadConfiguration(fileConfigName string) YamlConfig {
 	var cfg YamlConfig
 	var err error
-	
+
 	if fileConfigName != "" {
 		cfg, err = ReadYAMLConfigFile(fileConfigName)
 		if err != nil {
@@ -89,7 +89,7 @@ func loadConfiguration(fileConfigName string) YamlConfig {
 		}
 		return cfg
 	}
-	
+
 	log.Infoln("No config file specified. Try to get configuration with environment variable")
 	cfg.RedisHost = os.Getenv("REDIS_HOST")
 	cfg.RedisPort = os.Getenv("REDIS_PORT")
@@ -115,7 +115,7 @@ func setupEventHandler(factory kubeinformers.SharedInformerFactory, app *AppK8sE
 	eventInformer := factory.Core().V1().Events().Informer()
 
 	_, err := eventInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
+		AddFunc: func(obj any) {
 			e, ok := obj.(*v1.Event)
 			if !ok {
 				log.Errorln("Failed to cast object to v1.Event")
@@ -156,12 +156,12 @@ func main() {
 	flag.StringVar(&fileConfigName, "f", "", "YAML file to parse.")
 	flag.BoolVar(&showVersion, "v", false, "Print version and exit.")
 	flag.Parse()
-	
+
 	if showVersion {
 		fmt.Println(version)
 		os.Exit(0)
 	}
-	
+
 	initTrace(os.Getenv("LOGLEVEL"))
 	cfg := loadConfiguration(fileConfigName)
 
@@ -266,7 +266,7 @@ func (a *AppK8sEvents2Redis) Write2Stream(c Event) error {
 			Stream: a.redisStream,
 			MaxLen: int64(a.redisMaxStreamLength),
 			ID:     "",
-			Values: map[string]interface{}{
+			Values: map[string]any{
 				"name":         c.Name,
 				"namespace":    c.Namespace,
 				"reason":       c.Reason,
