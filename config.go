@@ -26,6 +26,7 @@ type YamlConfig struct {
 	RedisPassword        string `yaml:"redis_password"`
 	RedisStream          string `yaml:"redis_stream"`
 	RedisStreamMaxLength int    `yaml:"redis_stream_maxlength"`
+	MetricsPort          string `yaml:"metrics_port"`
 }
 
 // ReadYAMLConfigFile reads and parses a YAML configuration file.

@@ -5,12 +5,15 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
@@ -32,6 +35,8 @@ const (
 	redisRetryAttempts = 2
 	// redisOperationTimeout is the timeout for Redis operations.
 	redisOperationTimeout = 5 * time.Second
+	// metricsServerReadHeaderTimeout is the timeout for reading request headers in the metrics server.
+	metricsServerReadHeaderTimeout = 5 * time.Second
 )
 
 // Event represents a Kubernetes event to be exported to Redis.
@@ -87,6 +92,9 @@ func loadConfiguration(fileConfigName string) YamlConfig {
 		if err != nil {
 			log.Fatal(err)
 		}
+		if cfg.MetricsPort == "" {
+			cfg.MetricsPort = "2112"
+		}
 		return cfg
 	}
 
@@ -104,10 +112,42 @@ func loadConfiguration(fileConfigName string) YamlConfig {
 			log.Fatal(err)
 		}
 	}
+	cfg.MetricsPort = os.Getenv("METRICS_PORT")
+	if cfg.MetricsPort == "" {
+		cfg.MetricsPort = "2112"
+	}
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("Configuration validation failed: %v", err)
 	}
 	return cfg
+}
+
+func startMetricsServer(port string) {
+	http.Handle("/metrics", promhttp.Handler())
+	addr := ":" + port
+	log.Infof("Starting metrics server on %s", addr)
+
+	server := &http.Server{
+		Addr:              addr,
+		ReadHeaderTimeout: metricsServerReadHeaderTimeout,
+	}
+
+	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Errorf("Metrics server failed: %v", err)
+	}
+}
+
+func setupKubernetesClient() (*kubernetes.Clientset, error) {
+	kubeconfig := ""
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build Kubernetes config: %w", err)
+	}
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
+	}
+	return clientset, nil
 }
 
 func setupEventHandler(factory kubeinformers.SharedInformerFactory, app *AppK8sEvents2Redis) error {
@@ -123,6 +163,10 @@ func setupEventHandler(factory kubeinformers.SharedInformerFactory, app *AppK8sE
 			}
 			log.Debugf("ADDED: eventTime=%s Type=%s Reason=%s Name=%s FirstTimestamp=%s Message=%s UID=%s\n",
 				e.EventTime, e.Type, e.Reason, e.Name, e.FirstTimestamp, e.Message, e.UID)
+
+			// Track event metrics
+			eventsTotal.WithLabelValues(e.Type, e.Namespace).Inc()
+
 			eventTime := time.Unix(e.EventTime.ProtoMicroTime().Seconds, int64(e.EventTime.ProtoMicroTime().Nanos))
 			firstTime := e.FirstTimestamp.Time
 			log.Debugf("eventTime=%s firstTime=%s", eventTime.String(), firstTime.String())
@@ -166,20 +210,18 @@ func main() {
 	cfg := loadConfiguration(fileConfigName)
 
 	log.Debugf("cfg=%+v\n", cfg)
+
+	// Start metrics server in background
+	go startMetricsServer(cfg.MetricsPort)
+
 	app, err := NewApp(cfg)
 	if err != nil {
 		log.Fatalf("Failed to initialize application: %v", err)
 	}
 
-	// https://medium.com/swlh/clientset-module-for-in-cluster-and-out-cluster-3f0d80af79ed
-	kubeconfig := ""
-	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	clientset, err := setupKubernetesClient()
 	if err != nil {
-		log.Fatalf("Failed to build Kubernetes config: %v", err)
-	}
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		log.Fatalf("Failed to create Kubernetes client: %v", err)
+		log.Fatalf("Failed to setup Kubernetes client: %v", err)
 	}
 
 	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(clientset, informerResyncInterval)
@@ -194,8 +236,10 @@ func main() {
 	log.Infoln("Waiting for informer cache to sync...")
 	if !cache.WaitForCacheSync(stop, kubeInformerFactory.Core().V1().Events().Informer().HasSynced) {
 		close(stop)
+		informerSynced.Set(0)
 		log.Fatal("Failed to sync informer cache")
 	}
+	informerSynced.Set(1)
 	log.Infoln("Informer cache synced successfully")
 
 	defer close(stop)
@@ -236,10 +280,18 @@ func (a *AppK8sEvents2Redis) InitProducer() error {
 		Addr:     addr,
 		Password: a.redisPassword,
 	})
+
+	// Track ping operation duration
+	timer := prometheus.NewTimer(redisOperationDuration.WithLabelValues("ping"))
 	_, err := a.redisClient.Ping(ctx).Result()
+	timer.ObserveDuration()
+
 	if err != nil {
+		redisConnected.Set(0)
 		return fmt.Errorf("failed to ping Redis server: %w", err)
 	}
+
+	redisConnected.Set(1)
 	log.Infoln("Connected to Redis server")
 	return nil
 }
@@ -256,12 +308,16 @@ func (a *AppK8sEvents2Redis) Close() error {
 
 // Write2Stream writes a kubernetes event to the redis stream.
 func (a *AppK8sEvents2Redis) Write2Stream(c Event) error {
+	timer := prometheus.NewTimer(eventWriteDuration)
+	defer timer.ObserveDuration()
+
 	ctx, cancel := context.WithTimeout(context.Background(), redisOperationTimeout)
 	defer cancel()
 
 	var err error
 
 	for i := range redisRetryAttempts {
+		opTimer := prometheus.NewTimer(redisOperationDuration.WithLabelValues("xadd"))
 		err = a.redisClient.XAdd(ctx, &redis.XAddArgs{
 			Stream: a.redisStream,
 			MaxLen: int64(a.redisMaxStreamLength),
@@ -277,19 +333,25 @@ func (a *AppK8sEvents2Redis) Write2Stream(c Event) error {
 				"exportedTime": c.ExportedTime,
 			},
 		}).Err()
+		opTimer.ObserveDuration()
+
 		if err != nil {
 			log.Errorf("Failed to write event to Redis (attempt %d/%d): %v", i+1, redisRetryAttempts, err)
+			redisReconnectionsTotal.Inc()
 			if reinitErr := a.InitProducer(); reinitErr != nil {
 				log.Errorf("Failed to reinitialize Redis connection: %v", reinitErr)
+				eventsFailedTotal.Inc()
 				return fmt.Errorf("redis write failed and reconnection failed: %w", err)
 			}
 		} else {
 			if i != 0 {
 				log.Infoln("XAdd error has been recovered")
 			}
+			eventsWrittenTotal.Inc()
 			return nil
 		}
 	}
 
+	eventsFailedTotal.Inc()
 	return fmt.Errorf("%w: %w", errEventNotWritten, err)
 }
