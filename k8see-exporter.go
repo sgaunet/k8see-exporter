@@ -275,7 +275,9 @@ func loadBackoffConfigFromEnv(cfg *YamlConfig) {
 func startMetricsServer(port string) {
 	http.Handle("/metrics", promhttp.Handler())
 	addr := ":" + port
-	log.Infof("Starting metrics server on %s", addr)
+	log.WithFields(logrus.Fields{
+		"address": addr,
+	}).Info("Starting metrics server")
 
 	server := &http.Server{
 		Addr:              addr,
@@ -283,7 +285,9 @@ func startMetricsServer(port string) {
 	}
 
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		log.Errorf("Metrics server failed: %v", err)
+		log.WithFields(logrus.Fields{
+			"error": err.Error(),
+		}).Error("Metrics server failed")
 	}
 }
 
@@ -311,15 +315,26 @@ func setupEventHandler(factory kubeinformers.SharedInformerFactory, app *AppK8sE
 				log.Errorln("Failed to cast object to v1.Event")
 				return
 			}
-			log.Debugf("ADDED: eventTime=%s Type=%s Reason=%s Name=%s FirstTimestamp=%s Message=%s UID=%s\n",
-				e.EventTime, e.Type, e.Reason, e.Name, e.FirstTimestamp, e.Message, e.UID)
+			log.WithFields(logrus.Fields{
+				"eventTime":      e.EventTime,
+				"type":           e.Type,
+				"reason":         e.Reason,
+				"name":           e.Name,
+				"firstTimestamp": e.FirstTimestamp,
+				"message":        e.Message,
+				"uid":            e.UID,
+				"namespace":      e.Namespace,
+			}).Debug("Kubernetes event added")
 
 			// Track event metrics
 			eventsTotal.WithLabelValues(e.Type, e.Namespace).Inc()
 
 			eventTime := time.Unix(e.EventTime.ProtoMicroTime().Seconds, int64(e.EventTime.ProtoMicroTime().Nanos))
 			firstTime := e.FirstTimestamp.Time
-			log.Debugf("eventTime=%s firstTime=%s", eventTime.String(), firstTime.String())
+			log.WithFields(logrus.Fields{
+				"eventTime": eventTime.String(),
+				"firstTime": firstTime.String(),
+			}).Debug("Processing event timestamps")
 			event := Event{
 				ExportedTime: time.Now().Format(time.RFC3339),
 				EventTime:    eventTime.Format(time.RFC3339),
@@ -335,11 +350,17 @@ func setupEventHandler(factory kubeinformers.SharedInformerFactory, app *AppK8sE
 			select {
 			case app.eventChannel <- event:
 				eventsEnqueuedTotal.Inc()
-				log.Debugf("Event enqueued: %s/%s", event.Namespace, event.Name)
+				log.WithFields(logrus.Fields{
+					"namespace": event.Namespace,
+					"name":      event.Name,
+				}).Debug("Event enqueued")
 			default:
 				// Buffer full - drop event
 				eventsDroppedTotal.Inc()
-				log.Warnf("Event buffer full, dropping event: %s/%s", event.Namespace, event.Name)
+				log.WithFields(logrus.Fields{
+					"namespace": event.Namespace,
+					"name":      event.Name,
+				}).Warn("Event buffer full, dropping event")
 			}
 		},
 	})
@@ -460,7 +481,11 @@ func NewApp(cfg YamlConfig) (*AppK8sEvents2Redis, error) {
 				return counts.Requests >= 3 && failureRatio >= cfg.CircuitBreakerFailureRatio
 			},
 			OnStateChange: func(name string, from gobreaker.State, to gobreaker.State) {
-				log.Warnf("Circuit breaker '%s' state changed from %s to %s", name, from, to)
+				log.WithFields(logrus.Fields{
+					"circuitBreaker": name,
+					"fromState":      from.String(),
+					"toState":        to.String(),
+				}).Warn("Circuit breaker state changed")
 				// Update metrics
 				switch to {
 				case gobreaker.StateClosed:
@@ -527,7 +552,9 @@ func (a *AppK8sEvents2Redis) Close() error {
 
 // StartWorkers launches the background worker pool.
 func (a *AppK8sEvents2Redis) StartWorkers() {
-	log.Infof("Starting %d event processing workers", a.numWorkers)
+	log.WithFields(logrus.Fields{
+		"numWorkers": a.numWorkers,
+	}).Info("Starting event processing workers")
 	activeWorkers.Set(float64(a.numWorkers))
 
 	for i := range a.numWorkers {
@@ -540,13 +567,17 @@ func (a *AppK8sEvents2Redis) StartWorkers() {
 // eventWorker processes events from the channel.
 func (a *AppK8sEvents2Redis) eventWorker(id int) {
 	defer a.workerWg.Done()
-	log.Debugf("Worker %d started", id)
+	log.WithFields(logrus.Fields{
+		"workerId": id,
+	}).Debug("Worker started")
 
 	for {
 		select {
 		case event, ok := <-a.eventChannel:
 			if !ok {
-				log.Debugf("Worker %d: channel closed, exiting", id)
+				log.WithFields(logrus.Fields{
+					"workerId": id,
+				}).Debug("Worker channel closed, exiting")
 				return
 			}
 
@@ -560,12 +591,19 @@ func (a *AppK8sEvents2Redis) eventWorker(id int) {
 
 			// Process event with retries
 			if err := a.writeEventWithRetry(event); err != nil {
-				log.Errorf("Worker %d: failed to write event after retries: %v", id, err)
+				log.WithFields(logrus.Fields{
+					"workerId":  id,
+					"error":     err.Error(),
+					"namespace": event.Namespace,
+					"name":      event.Name,
+				}).Error("Failed to write event after retries")
 				eventsFailedTotal.Inc()
 			}
 
 		case <-a.shutdownChan:
-			log.Debugf("Worker %d: shutdown signal received, exiting", id)
+			log.WithFields(logrus.Fields{
+				"workerId": id,
+			}).Debug("Worker shutdown signal received, exiting")
 			return
 		}
 	}
@@ -609,7 +647,10 @@ func (a *AppK8sEvents2Redis) writeEventWithRetry(event Event) error {
 	if attempts > 1 {
 		backoffDuration := time.Since(startTime).Seconds()
 		redisBackoffDuration.Observe(backoffDuration)
-		log.Infof("Event written successfully after %d attempts (%.2fs)", attempts, backoffDuration)
+		log.WithFields(logrus.Fields{
+			"attempts": attempts,
+			"duration": backoffDuration,
+		}).Info("Event written successfully after retries")
 	}
 
 	if err != nil {
@@ -647,13 +688,17 @@ func (a *AppK8sEvents2Redis) writeToRedis(event Event) error {
 	opTimer.ObserveDuration()
 
 	if err != nil {
-		log.Errorf("Redis XAdd failed: %v", err)
+		log.WithFields(logrus.Fields{
+			"error": err.Error(),
+		}).Error("Redis XAdd operation failed")
 		redisConnected.Set(0)
 
 		// Attempt reconnection
 		redisReconnectionsTotal.Inc()
 		if reinitErr := a.InitProducer(); reinitErr != nil {
-			log.Errorf("Failed to reinitialize Redis connection: %v", reinitErr)
+			log.WithFields(logrus.Fields{
+				"error": reinitErr.Error(),
+			}).Error("Failed to reinitialize Redis connection")
 			return fmt.Errorf("redis write failed and reconnection failed: %w", err)
 		}
 
@@ -683,7 +728,9 @@ func (a *AppK8sEvents2Redis) Shutdown() error {
 	case <-done:
 		log.Infoln("All events processed successfully")
 	case <-time.After(a.shutdownTimeout):
-		log.Warnf("Shutdown timeout reached, %d events may be lost", len(a.eventChannel))
+		log.WithFields(logrus.Fields{
+			"remainingEvents": len(a.eventChannel),
+		}).Warn("Shutdown timeout reached, events may be lost")
 		close(a.shutdownChan) // Force worker exit
 
 		// Wait a bit for workers to exit
@@ -731,10 +778,16 @@ func (a *AppK8sEvents2Redis) Write2Stream(c Event) error {
 		opTimer.ObserveDuration()
 
 		if err != nil {
-			log.Errorf("Failed to write event to Redis (attempt %d/%d): %v", i+1, redisRetryAttempts, err)
+			log.WithFields(logrus.Fields{
+				"attempt":      i + 1,
+				"maxAttempts":  redisRetryAttempts,
+				"error":        err.Error(),
+			}).Error("Failed to write event to Redis")
 			redisReconnectionsTotal.Inc()
 			if reinitErr := a.InitProducer(); reinitErr != nil {
-				log.Errorf("Failed to reinitialize Redis connection: %v", reinitErr)
+				log.WithFields(logrus.Fields{
+					"error": reinitErr.Error(),
+				}).Error("Failed to reinitialize Redis connection")
 				eventsFailedTotal.Inc()
 				return fmt.Errorf("redis write failed and reconnection failed: %w", err)
 			}
