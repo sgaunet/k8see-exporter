@@ -85,10 +85,10 @@ func (c *YamlConfig) SetDefaults() {
 		c.ShutdownTimeout = 30
 	}
 
-	// Circuit breaker defaults (enabled by default)
-	if !c.CircuitBreakerEnabled {
-		c.CircuitBreakerEnabled = true
-	}
+	// Circuit breaker defaults
+	// Note: CircuitBreakerEnabled is NOT defaulted here because Go's zero value (false)
+	// is indistinguishable from an explicit false. If you want circuit breaker enabled
+	// by default, set it in your YAML config or environment variables.
 	if c.CircuitBreakerMaxRequests == 0 {
 		c.CircuitBreakerMaxRequests = 3
 	}

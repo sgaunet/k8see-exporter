@@ -1,0 +1,2 @@
+redis_host: localhost
+# Missing redis_port and redis_stream (required fields)

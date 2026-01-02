@@ -1,0 +1,23 @@
+redis_host: localhost
+redis_port: "6379"
+redis_stream: k8sevents
+redis_stream_maxlength: 5000
+metrics_port: "2112"
+
+# Async processing configuration
+event_buffer_size: 10000
+event_workers: 1
+shutdown_timeout_sec: 30
+
+# Circuit breaker configuration
+circuit_breaker_enabled: true
+circuit_breaker_max_requests: 3
+circuit_breaker_interval_sec: 60
+circuit_breaker_timeout_sec: 30
+circuit_breaker_failure_ratio: 0.6
+
+# Exponential backoff configuration
+backoff_initial_interval_ms: 500
+backoff_multiplier: 2.0
+backoff_max_interval_ms: 30000
+backoff_max_elapsed_time_ms: 60000
