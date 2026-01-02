@@ -41,3 +41,16 @@ tasks:
     desc: "Create a release"
     cmds:
       - GITLAB_TOKEN="" goreleaser release --clean
+
+  test:
+    desc: "Run unit tests with race detection"
+    cmds:
+      - go test -v -race ./...
+
+  test-coverage:
+    desc: "Run tests and generate coverage report"
+    cmds:
+      - go test -coverprofile=coverage.out ./...
+      - sed -i.bak '/cmd/d' coverage.out && rm coverage.out.bak
+      - go tool cover -func coverage.out | grep '^total:'
+      - rm coverage.out

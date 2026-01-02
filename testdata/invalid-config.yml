@@ -1,0 +1,4 @@
+redis_host: localhost
+redis_port: "6379"
+  invalid indentation here
+redis_stream: k8sevents
