@@ -9,12 +9,15 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
+	"github.com/sony/gobreaker"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
@@ -37,6 +40,14 @@ const (
 	redisOperationTimeout = 5 * time.Second
 	// metricsServerReadHeaderTimeout is the timeout for reading request headers in the metrics server.
 	metricsServerReadHeaderTimeout = 5 * time.Second
+
+	// Circuit breaker state values.
+	circuitBreakerStateClosed   = 0
+	circuitBreakerStateHalfOpen = 1
+	circuitBreakerStateOpen     = 2
+
+	// Metrics configuration.
+	maxRetryAttemptsHistogram = 10
 )
 
 // Event represents a Kubernetes event to be exported to Redis.
@@ -59,6 +70,28 @@ type AppK8sEvents2Redis struct {
 	redisStream          string
 	redisMaxStreamLength int
 	redisClient          *redis.Client
+
+	// Async processing fields.
+	eventChannel    chan Event
+	workerWg        sync.WaitGroup
+	shutdownChan    chan struct{}
+	shutdownTimeout time.Duration
+	numWorkers      int
+
+	// Circuit breaker.
+	circuitBreaker *gobreaker.CircuitBreaker
+	cbEnabled      bool
+
+	// Backoff configuration.
+	backoffConfig *BackoffConfig
+}
+
+// BackoffConfig holds exponential backoff settings.
+type BackoffConfig struct {
+	InitialInterval time.Duration
+	Multiplier      float64
+	MaxInterval     time.Duration
+	MaxElapsedTime  time.Duration
 }
 
 var (
@@ -84,42 +117,159 @@ func initTrace(debugLevel string) {
 }
 
 func loadConfiguration(fileConfigName string) YamlConfig {
-	var cfg YamlConfig
-	var err error
-
 	if fileConfigName != "" {
-		cfg, err = ReadYAMLConfigFile(fileConfigName)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if cfg.MetricsPort == "" {
-			cfg.MetricsPort = "2112"
-		}
-		return cfg
+		return loadConfigurationFromFile(fileConfigName)
 	}
+	return loadConfigurationFromEnv()
+}
 
-	log.Infoln("No config file specified. Try to get configuration with environment variable")
-	cfg.RedisHost = os.Getenv("REDIS_HOST")
-	cfg.RedisPort = os.Getenv("REDIS_PORT")
-	cfg.RedisPassword = os.Getenv("REDIS_PASSWORD")
-	cfg.RedisStream = os.Getenv("REDIS_STREAM")
-	maxStreamLength := os.Getenv("REDIS_STREAM_MAX_LENGTH")
-	if maxStreamLength == "" {
-		cfg.RedisStreamMaxLength = defaultRedisStreamMaxLength
-	} else {
-		cfg.RedisStreamMaxLength, err = strconv.Atoi(maxStreamLength)
-		if err != nil {
-			log.Fatal(err)
-		}
+func loadConfigurationFromFile(fileConfigName string) YamlConfig {
+	cfg, err := ReadYAMLConfigFile(fileConfigName)
+	if err != nil {
+		log.Fatal(err)
 	}
-	cfg.MetricsPort = os.Getenv("METRICS_PORT")
 	if cfg.MetricsPort == "" {
 		cfg.MetricsPort = "2112"
 	}
+	cfg.SetDefaults()
+	return cfg
+}
+
+func loadConfigurationFromEnv() YamlConfig {
+	log.Infoln("No config file specified. Try to get configuration with environment variable")
+	var cfg YamlConfig
+
+	loadBasicConfigFromEnv(&cfg)
+	loadAsyncConfigFromEnv(&cfg)
+	loadCircuitBreakerConfigFromEnv(&cfg)
+	loadBackoffConfigFromEnv(&cfg)
+
+	cfg.SetDefaults()
+
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("Configuration validation failed: %v", err)
 	}
 	return cfg
+}
+
+func loadBasicConfigFromEnv(cfg *YamlConfig) {
+	cfg.RedisHost = os.Getenv("REDIS_HOST")
+	cfg.RedisPort = os.Getenv("REDIS_PORT")
+	cfg.RedisPassword = os.Getenv("REDIS_PASSWORD")
+	cfg.RedisStream = os.Getenv("REDIS_STREAM")
+
+	maxStreamLength := os.Getenv("REDIS_STREAM_MAX_LENGTH")
+	if maxStreamLength == "" {
+		cfg.RedisStreamMaxLength = defaultRedisStreamMaxLength
+	} else {
+		val, err := strconv.Atoi(maxStreamLength)
+		if err != nil {
+			log.Fatal(err)
+		}
+		cfg.RedisStreamMaxLength = val
+	}
+
+	cfg.MetricsPort = os.Getenv("METRICS_PORT")
+	if cfg.MetricsPort == "" {
+		cfg.MetricsPort = "2112"
+	}
+}
+
+func loadAsyncConfigFromEnv(cfg *YamlConfig) {
+	if eventBufferSize := os.Getenv("EVENT_BUFFER_SIZE"); eventBufferSize != "" {
+		val, err := strconv.Atoi(eventBufferSize)
+		if err != nil {
+			log.Fatal(err)
+		}
+		cfg.EventBufferSize = val
+	}
+	if eventWorkers := os.Getenv("EVENT_WORKERS"); eventWorkers != "" {
+		val, err := strconv.Atoi(eventWorkers)
+		if err != nil {
+			log.Fatal(err)
+		}
+		cfg.EventWorkers = val
+	}
+	if shutdownTimeout := os.Getenv("SHUTDOWN_TIMEOUT_SEC"); shutdownTimeout != "" {
+		val, err := strconv.Atoi(shutdownTimeout)
+		if err != nil {
+			log.Fatal(err)
+		}
+		cfg.ShutdownTimeout = val
+	}
+}
+
+func loadCircuitBreakerConfigFromEnv(cfg *YamlConfig) {
+	if cbEnabled := os.Getenv("CIRCUIT_BREAKER_ENABLED"); cbEnabled != "" {
+		val, err := strconv.ParseBool(cbEnabled)
+		if err != nil {
+			log.Fatal(err)
+		}
+		cfg.CircuitBreakerEnabled = val
+	}
+	if cbMaxRequests := os.Getenv("CIRCUIT_BREAKER_MAX_REQUESTS"); cbMaxRequests != "" {
+		val, err := strconv.ParseUint(cbMaxRequests, 10, 32)
+		if err != nil {
+			log.Fatal(err)
+		}
+		cfg.CircuitBreakerMaxRequests = uint32(val)
+	}
+	loadCircuitBreakerTimingFromEnv(cfg)
+}
+
+func loadCircuitBreakerTimingFromEnv(cfg *YamlConfig) {
+	if cbInterval := os.Getenv("CIRCUIT_BREAKER_INTERVAL_SEC"); cbInterval != "" {
+		val, err := strconv.Atoi(cbInterval)
+		if err != nil {
+			log.Fatal(err)
+		}
+		cfg.CircuitBreakerInterval = val
+	}
+	if cbTimeout := os.Getenv("CIRCUIT_BREAKER_TIMEOUT_SEC"); cbTimeout != "" {
+		val, err := strconv.Atoi(cbTimeout)
+		if err != nil {
+			log.Fatal(err)
+		}
+		cfg.CircuitBreakerTimeout = val
+	}
+	if cbFailureRatio := os.Getenv("CIRCUIT_BREAKER_FAILURE_RATIO"); cbFailureRatio != "" {
+		val, err := strconv.ParseFloat(cbFailureRatio, 64)
+		if err != nil {
+			log.Fatal(err)
+		}
+		cfg.CircuitBreakerFailureRatio = val
+	}
+}
+
+func loadBackoffConfigFromEnv(cfg *YamlConfig) {
+	if backoffInitial := os.Getenv("BACKOFF_INITIAL_INTERVAL_MS"); backoffInitial != "" {
+		val, err := strconv.Atoi(backoffInitial)
+		if err != nil {
+			log.Fatal(err)
+		}
+		cfg.BackoffInitialInterval = val
+	}
+	if backoffMultiplier := os.Getenv("BACKOFF_MULTIPLIER"); backoffMultiplier != "" {
+		val, err := strconv.ParseFloat(backoffMultiplier, 64)
+		if err != nil {
+			log.Fatal(err)
+		}
+		cfg.BackoffMultiplier = val
+	}
+	if backoffMaxInterval := os.Getenv("BACKOFF_MAX_INTERVAL_MS"); backoffMaxInterval != "" {
+		val, err := strconv.Atoi(backoffMaxInterval)
+		if err != nil {
+			log.Fatal(err)
+		}
+		cfg.BackoffMaxInterval = val
+	}
+	if backoffMaxElapsed := os.Getenv("BACKOFF_MAX_ELAPSED_TIME_MS"); backoffMaxElapsed != "" {
+		val, err := strconv.Atoi(backoffMaxElapsed)
+		if err != nil {
+			log.Fatal(err)
+		}
+		cfg.BackoffMaxElapsedTime = val
+	}
 }
 
 func startMetricsServer(port string) {
@@ -180,9 +330,16 @@ func setupEventHandler(factory kubeinformers.SharedInformerFactory, app *AppK8sE
 				Message:      e.Message,
 				Namespace:    e.Namespace,
 			}
-			err := app.Write2Stream(event)
-			if err != nil {
-				log.Errorln(err.Error())
+
+			// Async enqueue to channel (non-blocking)
+			select {
+			case app.eventChannel <- event:
+				eventsEnqueuedTotal.Inc()
+				log.Debugf("Event enqueued: %s/%s", event.Namespace, event.Name)
+			default:
+				// Buffer full - drop event
+				eventsDroppedTotal.Inc()
+				log.Warnf("Event buffer full, dropping event: %s/%s", event.Namespace, event.Name)
 			}
 		},
 	})
@@ -195,7 +352,6 @@ func setupEventHandler(factory kubeinformers.SharedInformerFactory, app *AppK8sE
 func main() {
 	var fileConfigName string
 	var showVersion bool
-	var err error
 
 	flag.StringVar(&fileConfigName, "f", "", "YAML file to parse.")
 	flag.BoolVar(&showVersion, "v", false, "Print version and exit.")
@@ -208,7 +364,6 @@ func main() {
 
 	initTrace(os.Getenv("LOGLEVEL"))
 	cfg := loadConfiguration(fileConfigName)
-
 	log.Debugf("cfg=%+v\n", cfg)
 
 	// Start metrics server in background
@@ -224,6 +379,21 @@ func main() {
 		log.Fatalf("Failed to setup Kubernetes client: %v", err)
 	}
 
+	stop := setupInformerAndWaitForSync(clientset, app)
+
+	waitForShutdownSignal()
+
+	close(stop)
+
+	if err := app.Shutdown(); err != nil {
+		log.Errorf("Error during shutdown: %v", err)
+		os.Exit(1)
+	}
+
+	log.Infoln("Shutdown complete")
+}
+
+func setupInformerAndWaitForSync(clientset *kubernetes.Clientset, app *AppK8sEvents2Redis) chan struct{} {
 	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(clientset, informerResyncInterval)
 	if err := setupEventHandler(kubeInformerFactory, app); err != nil {
 		log.Fatalf("Failed to setup event handler: %v", err)
@@ -232,7 +402,6 @@ func main() {
 	stop := make(chan struct{})
 	kubeInformerFactory.Start(stop)
 
-	// Wait for cache sync
 	log.Infoln("Waiting for informer cache to sync...")
 	if !cache.WaitForCacheSync(stop, kubeInformerFactory.Core().V1().Events().Informer().HasSynced) {
 		close(stop)
@@ -242,32 +411,82 @@ func main() {
 	informerSynced.Set(1)
 	log.Infoln("Informer cache synced successfully")
 
-	defer close(stop)
+	return stop
+}
 
-	// Setup signal handling for graceful shutdown
+func waitForShutdownSignal() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	log.Infoln("k8see-exporter started. Press Ctrl+C to stop.")
 	<-sigChan
 	log.Infoln("Received shutdown signal. Shutting down gracefully...")
-
-	// Cleanup Redis connection
-	if err := app.Close(); err != nil {
-		log.Errorf("Error closing Redis connection: %v", err)
-	}
 }
 
 // NewApp is the factory, return an error if the connection to redis server failed.
 func NewApp(cfg YamlConfig) (*AppK8sEvents2Redis, error) {
-	app := AppK8sEvents2Redis{
+	app := &AppK8sEvents2Redis{
 		redisHost:            cfg.RedisHost,
 		redisPort:            cfg.RedisPort,
 		redisPassword:        cfg.RedisPassword,
 		redisStream:          cfg.RedisStream,
 		redisMaxStreamLength: cfg.RedisStreamMaxLength,
+
+		// Initialize async processing components
+		eventChannel:    make(chan Event, cfg.EventBufferSize),
+		shutdownChan:    make(chan struct{}),
+		shutdownTimeout: time.Duration(cfg.ShutdownTimeout) * time.Second,
+		numWorkers:      cfg.EventWorkers,
+		cbEnabled:       cfg.CircuitBreakerEnabled,
+
+		// Initialize backoff configuration
+		backoffConfig: &BackoffConfig{
+			InitialInterval: time.Duration(cfg.BackoffInitialInterval) * time.Millisecond,
+			Multiplier:      cfg.BackoffMultiplier,
+			MaxInterval:     time.Duration(cfg.BackoffMaxInterval) * time.Millisecond,
+			MaxElapsedTime:  time.Duration(cfg.BackoffMaxElapsedTime) * time.Millisecond,
+		},
 	}
-	return &app, app.InitProducer()
+
+	// Initialize circuit breaker if enabled
+	if cfg.CircuitBreakerEnabled {
+		app.circuitBreaker = gobreaker.NewCircuitBreaker(gobreaker.Settings{
+			Name:        "RedisWrite",
+			MaxRequests: cfg.CircuitBreakerMaxRequests,
+			Interval:    time.Duration(cfg.CircuitBreakerInterval) * time.Second,
+			Timeout:     time.Duration(cfg.CircuitBreakerTimeout) * time.Second,
+			ReadyToTrip: func(counts gobreaker.Counts) bool {
+				failureRatio := float64(counts.TotalFailures) / float64(counts.Requests)
+				return counts.Requests >= 3 && failureRatio >= cfg.CircuitBreakerFailureRatio
+			},
+			OnStateChange: func(name string, from gobreaker.State, to gobreaker.State) {
+				log.Warnf("Circuit breaker '%s' state changed from %s to %s", name, from, to)
+				// Update metrics
+				switch to {
+				case gobreaker.StateClosed:
+					circuitBreakerState.Set(circuitBreakerStateClosed)
+				case gobreaker.StateHalfOpen:
+					circuitBreakerState.Set(circuitBreakerStateHalfOpen)
+				case gobreaker.StateOpen:
+					circuitBreakerState.Set(circuitBreakerStateOpen)
+					circuitBreakerTrips.Inc()
+				}
+			},
+		})
+	}
+
+	// Set buffer capacity metric
+	eventBufferCapacity.Set(float64(cfg.EventBufferSize))
+
+	// Initial Redis connection
+	if err := app.InitProducer(); err != nil {
+		return nil, err
+	}
+
+	// Start worker pool
+	app.StartWorkers()
+
+	return app, nil
 }
 
 // InitProducer initialise redisClient and ensure that connection is ok.
@@ -303,6 +522,182 @@ func (a *AppK8sEvents2Redis) Close() error {
 			return fmt.Errorf("failed to close Redis client: %w", err)
 		}
 	}
+	return nil
+}
+
+// StartWorkers launches the background worker pool.
+func (a *AppK8sEvents2Redis) StartWorkers() {
+	log.Infof("Starting %d event processing workers", a.numWorkers)
+	activeWorkers.Set(float64(a.numWorkers))
+
+	for i := range a.numWorkers {
+		a.workerWg.Add(1)
+		go a.eventWorker(i)
+	}
+}
+
+//nolint:funcorder // Internal async methods grouped together
+// eventWorker processes events from the channel.
+func (a *AppK8sEvents2Redis) eventWorker(id int) {
+	defer a.workerWg.Done()
+	log.Debugf("Worker %d started", id)
+
+	for {
+		select {
+		case event, ok := <-a.eventChannel:
+			if !ok {
+				log.Debugf("Worker %d: channel closed, exiting", id)
+				return
+			}
+
+			// Update buffer metrics
+			bufferLen := len(a.eventChannel)
+			eventBufferSize.Set(float64(bufferLen))
+			bufferCap := cap(a.eventChannel)
+			if bufferCap > 0 {
+				eventBufferUtilization.Set(float64(bufferLen) / float64(bufferCap))
+			}
+
+			// Process event with retries
+			if err := a.writeEventWithRetry(event); err != nil {
+				log.Errorf("Worker %d: failed to write event after retries: %v", id, err)
+				eventsFailedTotal.Inc()
+			}
+
+		case <-a.shutdownChan:
+			log.Debugf("Worker %d: shutdown signal received, exiting", id)
+			return
+		}
+	}
+}
+
+//nolint:funcorder // Internal async methods grouped together
+// writeEventWithRetry wraps writeToRedis with circuit breaker and exponential backoff.
+func (a *AppK8sEvents2Redis) writeEventWithRetry(event Event) error {
+	// Create exponential backoff
+	b := backoff.NewExponentialBackOff()
+	b.InitialInterval = a.backoffConfig.InitialInterval
+	b.Multiplier = a.backoffConfig.Multiplier
+	b.MaxInterval = a.backoffConfig.MaxInterval
+	b.MaxElapsedTime = a.backoffConfig.MaxElapsedTime
+
+	var attempts int
+	startTime := time.Now()
+
+	operation := func() error {
+		attempts++
+
+		// Use circuit breaker if enabled
+		if a.cbEnabled {
+			_, err := a.circuitBreaker.Execute(func() (any, error) {
+				return nil, a.writeToRedis(event)
+			})
+			if err != nil {
+				return fmt.Errorf("circuit breaker execution failed: %w", err)
+			}
+			return nil
+		}
+
+		// Direct write if circuit breaker disabled
+		return a.writeToRedis(event)
+	}
+
+	err := backoff.Retry(operation, b)
+
+	// Record retry metrics
+	redisRetryAttemptsHistogram.Observe(float64(attempts))
+	if attempts > 1 {
+		backoffDuration := time.Since(startTime).Seconds()
+		redisBackoffDuration.Observe(backoffDuration)
+		log.Infof("Event written successfully after %d attempts (%.2fs)", attempts, backoffDuration)
+	}
+
+	if err != nil {
+		return fmt.Errorf("retry operation failed after %d attempts: %w", attempts, err)
+	}
+
+	return nil
+}
+
+//nolint:funcorder // Internal async methods grouped together
+// writeToRedis performs the actual Redis write operation.
+func (a *AppK8sEvents2Redis) writeToRedis(event Event) error {
+	timer := prometheus.NewTimer(eventWriteDuration)
+	defer timer.ObserveDuration()
+
+	ctx, cancel := context.WithTimeout(context.Background(), redisOperationTimeout)
+	defer cancel()
+
+	opTimer := prometheus.NewTimer(redisOperationDuration.WithLabelValues("xadd"))
+	err := a.redisClient.XAdd(ctx, &redis.XAddArgs{
+		Stream: a.redisStream,
+		MaxLen: int64(a.redisMaxStreamLength),
+		ID:     "",
+		Values: map[string]any{
+			"name":         event.Name,
+			"namespace":    event.Namespace,
+			"reason":       event.Reason,
+			"type":         event.Type,
+			"message":      event.Message,
+			"eventTime":    event.EventTime,
+			"firstTime":    event.FirstTime,
+			"exportedTime": event.ExportedTime,
+		},
+	}).Err()
+	opTimer.ObserveDuration()
+
+	if err != nil {
+		log.Errorf("Redis XAdd failed: %v", err)
+		redisConnected.Set(0)
+
+		// Attempt reconnection
+		redisReconnectionsTotal.Inc()
+		if reinitErr := a.InitProducer(); reinitErr != nil {
+			log.Errorf("Failed to reinitialize Redis connection: %v", reinitErr)
+			return fmt.Errorf("redis write failed and reconnection failed: %w", err)
+		}
+
+		return fmt.Errorf("redis write operation failed: %w", err)
+	}
+
+	eventsWrittenTotal.Inc()
+	return nil
+}
+
+// Shutdown performs graceful shutdown with timeout.
+func (a *AppK8sEvents2Redis) Shutdown() error {
+	log.Infoln("Starting graceful shutdown...")
+
+	// Close event channel (no more events accepted)
+	close(a.eventChannel)
+	log.Infoln("Event channel closed, draining remaining events...")
+
+	// Wait for workers with timeout
+	done := make(chan struct{})
+	go func() {
+		a.workerWg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		log.Infoln("All events processed successfully")
+	case <-time.After(a.shutdownTimeout):
+		log.Warnf("Shutdown timeout reached, %d events may be lost", len(a.eventChannel))
+		close(a.shutdownChan) // Force worker exit
+
+		// Wait a bit for workers to exit
+		time.Sleep(1 * time.Second)
+	}
+
+	// Close Redis connection
+	if err := a.Close(); err != nil {
+		return fmt.Errorf("failed to close Redis connection: %w", err)
+	}
+
+	// Update metrics
+	activeWorkers.Set(0)
+
 	return nil
 }
 

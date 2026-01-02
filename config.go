@@ -27,6 +27,24 @@ type YamlConfig struct {
 	RedisStream          string `yaml:"redis_stream"`
 	RedisStreamMaxLength int    `yaml:"redis_stream_maxlength"`
 	MetricsPort          string `yaml:"metrics_port"`
+
+	// Async processing configuration.
+	EventBufferSize int `yaml:"event_buffer_size"` // Default: 10000
+	EventWorkers    int `yaml:"event_workers"`     // Default: 1 (maintains ordering)
+	ShutdownTimeout int `yaml:"shutdown_timeout_sec"` // Default: 30
+
+	// Circuit breaker configuration.
+	CircuitBreakerEnabled      bool    `yaml:"circuit_breaker_enabled"`       // Default: true
+	CircuitBreakerMaxRequests  uint32  `yaml:"circuit_breaker_max_requests"`  // Default: 3
+	CircuitBreakerInterval     int     `yaml:"circuit_breaker_interval_sec"`  // Default: 60
+	CircuitBreakerTimeout      int     `yaml:"circuit_breaker_timeout_sec"`   // Default: 30
+	CircuitBreakerFailureRatio float64 `yaml:"circuit_breaker_failure_ratio"` // Default: 0.6
+
+	// Exponential backoff configuration.
+	BackoffInitialInterval int     `yaml:"backoff_initial_interval_ms"` // Default: 500
+	BackoffMultiplier      float64 `yaml:"backoff_multiplier"`          // Default: 2.0
+	BackoffMaxInterval     int     `yaml:"backoff_max_interval_ms"`     // Default: 30000
+	BackoffMaxElapsedTime  int     `yaml:"backoff_max_elapsed_time_ms"` // Default: 60000
 }
 
 // ReadYAMLConfigFile reads and parses a YAML configuration file.
@@ -50,6 +68,53 @@ func ReadYAMLConfigFile(filename string) (YamlConfig, error) {
 	}
 
 	return yamlConfig, nil
+}
+
+// SetDefaults sets default values for optional configuration fields.
+//
+//nolint:cyclop // Complexity acceptable for configuration defaults
+func (c *YamlConfig) SetDefaults() {
+	// Async processing defaults
+	if c.EventBufferSize == 0 {
+		c.EventBufferSize = 10000
+	}
+	if c.EventWorkers == 0 {
+		c.EventWorkers = 1 // Single worker maintains ordering
+	}
+	if c.ShutdownTimeout == 0 {
+		c.ShutdownTimeout = 30
+	}
+
+	// Circuit breaker defaults (enabled by default)
+	if !c.CircuitBreakerEnabled {
+		c.CircuitBreakerEnabled = true
+	}
+	if c.CircuitBreakerMaxRequests == 0 {
+		c.CircuitBreakerMaxRequests = 3
+	}
+	if c.CircuitBreakerInterval == 0 {
+		c.CircuitBreakerInterval = 60
+	}
+	if c.CircuitBreakerTimeout == 0 {
+		c.CircuitBreakerTimeout = 30
+	}
+	if c.CircuitBreakerFailureRatio == 0 {
+		c.CircuitBreakerFailureRatio = 0.6
+	}
+
+	// Exponential backoff defaults
+	if c.BackoffInitialInterval == 0 {
+		c.BackoffInitialInterval = 500
+	}
+	if c.BackoffMultiplier == 0 {
+		c.BackoffMultiplier = 2.0
+	}
+	if c.BackoffMaxInterval == 0 {
+		c.BackoffMaxInterval = 30000
+	}
+	if c.BackoffMaxElapsedTime == 0 {
+		c.BackoffMaxElapsedTime = 60000
+	}
 }
 
 // Validate checks that required configuration fields are set.
