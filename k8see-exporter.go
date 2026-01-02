@@ -117,67 +117,95 @@ func initTrace(debugLevel string) {
 }
 
 func loadConfiguration(fileConfigName string) YamlConfig {
-	var cfg YamlConfig
-	var err error
-
 	if fileConfigName != "" {
-		cfg, err = ReadYAMLConfigFile(fileConfigName)
-		if err != nil {
-			log.Fatal(err)
-		}
-		if cfg.MetricsPort == "" {
-			cfg.MetricsPort = "2112"
-		}
-		// Apply defaults for any unset values
-		cfg.SetDefaults()
-		return cfg
+		return loadConfigurationFromFile(fileConfigName)
 	}
+	return loadConfigurationFromEnv()
+}
 
+func loadConfigurationFromFile(fileConfigName string) YamlConfig {
+	cfg, err := ReadYAMLConfigFile(fileConfigName)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if cfg.MetricsPort == "" {
+		cfg.MetricsPort = "2112"
+	}
+	cfg.SetDefaults()
+	return cfg
+}
+
+func loadConfigurationFromEnv() YamlConfig {
 	log.Infoln("No config file specified. Try to get configuration with environment variable")
+	var cfg YamlConfig
+
+	loadBasicConfigFromEnv(&cfg)
+	loadAsyncConfigFromEnv(&cfg)
+	loadCircuitBreakerConfigFromEnv(&cfg)
+	loadBackoffConfigFromEnv(&cfg)
+
+	cfg.SetDefaults()
+
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("Configuration validation failed: %v", err)
+	}
+	return cfg
+}
+
+func loadBasicConfigFromEnv(cfg *YamlConfig) {
 	cfg.RedisHost = os.Getenv("REDIS_HOST")
 	cfg.RedisPort = os.Getenv("REDIS_PORT")
 	cfg.RedisPassword = os.Getenv("REDIS_PASSWORD")
 	cfg.RedisStream = os.Getenv("REDIS_STREAM")
+
 	maxStreamLength := os.Getenv("REDIS_STREAM_MAX_LENGTH")
 	if maxStreamLength == "" {
 		cfg.RedisStreamMaxLength = defaultRedisStreamMaxLength
 	} else {
-		cfg.RedisStreamMaxLength, err = strconv.Atoi(maxStreamLength)
+		val, err := strconv.Atoi(maxStreamLength)
 		if err != nil {
 			log.Fatal(err)
 		}
+		cfg.RedisStreamMaxLength = val
 	}
+
 	cfg.MetricsPort = os.Getenv("METRICS_PORT")
 	if cfg.MetricsPort == "" {
 		cfg.MetricsPort = "2112"
 	}
+}
 
-	// Async processing configuration from environment variables
+func loadAsyncConfigFromEnv(cfg *YamlConfig) {
 	if eventBufferSize := os.Getenv("EVENT_BUFFER_SIZE"); eventBufferSize != "" {
-		cfg.EventBufferSize, err = strconv.Atoi(eventBufferSize)
+		val, err := strconv.Atoi(eventBufferSize)
 		if err != nil {
 			log.Fatal(err)
 		}
+		cfg.EventBufferSize = val
 	}
 	if eventWorkers := os.Getenv("EVENT_WORKERS"); eventWorkers != "" {
-		cfg.EventWorkers, err = strconv.Atoi(eventWorkers)
+		val, err := strconv.Atoi(eventWorkers)
 		if err != nil {
 			log.Fatal(err)
 		}
+		cfg.EventWorkers = val
 	}
 	if shutdownTimeout := os.Getenv("SHUTDOWN_TIMEOUT_SEC"); shutdownTimeout != "" {
-		cfg.ShutdownTimeout, err = strconv.Atoi(shutdownTimeout)
+		val, err := strconv.Atoi(shutdownTimeout)
 		if err != nil {
 			log.Fatal(err)
 		}
+		cfg.ShutdownTimeout = val
 	}
+}
 
-	// Circuit breaker configuration from environment variables
+func loadCircuitBreakerConfigFromEnv(cfg *YamlConfig) {
 	if cbEnabled := os.Getenv("CIRCUIT_BREAKER_ENABLED"); cbEnabled != "" {
-		cfg.CircuitBreakerEnabled, err = strconv.ParseBool(cbEnabled)
+		val, err := strconv.ParseBool(cbEnabled)
 		if err != nil {
 			log.Fatal(err)
 		}
+		cfg.CircuitBreakerEnabled = val
 	}
 	if cbMaxRequests := os.Getenv("CIRCUIT_BREAKER_MAX_REQUESTS"); cbMaxRequests != "" {
 		val, err := strconv.ParseUint(cbMaxRequests, 10, 32)
@@ -186,58 +214,62 @@ func loadConfiguration(fileConfigName string) YamlConfig {
 		}
 		cfg.CircuitBreakerMaxRequests = uint32(val)
 	}
+	loadCircuitBreakerTimingFromEnv(cfg)
+}
+
+func loadCircuitBreakerTimingFromEnv(cfg *YamlConfig) {
 	if cbInterval := os.Getenv("CIRCUIT_BREAKER_INTERVAL_SEC"); cbInterval != "" {
-		cfg.CircuitBreakerInterval, err = strconv.Atoi(cbInterval)
+		val, err := strconv.Atoi(cbInterval)
 		if err != nil {
 			log.Fatal(err)
 		}
+		cfg.CircuitBreakerInterval = val
 	}
 	if cbTimeout := os.Getenv("CIRCUIT_BREAKER_TIMEOUT_SEC"); cbTimeout != "" {
-		cfg.CircuitBreakerTimeout, err = strconv.Atoi(cbTimeout)
+		val, err := strconv.Atoi(cbTimeout)
 		if err != nil {
 			log.Fatal(err)
 		}
+		cfg.CircuitBreakerTimeout = val
 	}
 	if cbFailureRatio := os.Getenv("CIRCUIT_BREAKER_FAILURE_RATIO"); cbFailureRatio != "" {
-		cfg.CircuitBreakerFailureRatio, err = strconv.ParseFloat(cbFailureRatio, 64)
+		val, err := strconv.ParseFloat(cbFailureRatio, 64)
 		if err != nil {
 			log.Fatal(err)
 		}
+		cfg.CircuitBreakerFailureRatio = val
 	}
+}
 
-	// Exponential backoff configuration from environment variables
+func loadBackoffConfigFromEnv(cfg *YamlConfig) {
 	if backoffInitial := os.Getenv("BACKOFF_INITIAL_INTERVAL_MS"); backoffInitial != "" {
-		cfg.BackoffInitialInterval, err = strconv.Atoi(backoffInitial)
+		val, err := strconv.Atoi(backoffInitial)
 		if err != nil {
 			log.Fatal(err)
 		}
+		cfg.BackoffInitialInterval = val
 	}
 	if backoffMultiplier := os.Getenv("BACKOFF_MULTIPLIER"); backoffMultiplier != "" {
-		cfg.BackoffMultiplier, err = strconv.ParseFloat(backoffMultiplier, 64)
+		val, err := strconv.ParseFloat(backoffMultiplier, 64)
 		if err != nil {
 			log.Fatal(err)
 		}
+		cfg.BackoffMultiplier = val
 	}
 	if backoffMaxInterval := os.Getenv("BACKOFF_MAX_INTERVAL_MS"); backoffMaxInterval != "" {
-		cfg.BackoffMaxInterval, err = strconv.Atoi(backoffMaxInterval)
+		val, err := strconv.Atoi(backoffMaxInterval)
 		if err != nil {
 			log.Fatal(err)
 		}
+		cfg.BackoffMaxInterval = val
 	}
 	if backoffMaxElapsed := os.Getenv("BACKOFF_MAX_ELAPSED_TIME_MS"); backoffMaxElapsed != "" {
-		cfg.BackoffMaxElapsedTime, err = strconv.Atoi(backoffMaxElapsed)
+		val, err := strconv.Atoi(backoffMaxElapsed)
 		if err != nil {
 			log.Fatal(err)
 		}
+		cfg.BackoffMaxElapsedTime = val
 	}
-
-	// Apply defaults for any unset values
-	cfg.SetDefaults()
-
-	if err := cfg.Validate(); err != nil {
-		log.Fatalf("Configuration validation failed: %v", err)
-	}
-	return cfg
 }
 
 func startMetricsServer(port string) {
@@ -320,7 +352,6 @@ func setupEventHandler(factory kubeinformers.SharedInformerFactory, app *AppK8sE
 func main() {
 	var fileConfigName string
 	var showVersion bool
-	var err error
 
 	flag.StringVar(&fileConfigName, "f", "", "YAML file to parse.")
 	flag.BoolVar(&showVersion, "v", false, "Print version and exit.")
@@ -333,7 +364,6 @@ func main() {
 
 	initTrace(os.Getenv("LOGLEVEL"))
 	cfg := loadConfiguration(fileConfigName)
-
 	log.Debugf("cfg=%+v\n", cfg)
 
 	// Start metrics server in background
@@ -349,6 +379,21 @@ func main() {
 		log.Fatalf("Failed to setup Kubernetes client: %v", err)
 	}
 
+	stop := setupInformerAndWaitForSync(clientset, app)
+
+	waitForShutdownSignal()
+
+	close(stop)
+
+	if err := app.Shutdown(); err != nil {
+		log.Errorf("Error during shutdown: %v", err)
+		os.Exit(1)
+	}
+
+	log.Infoln("Shutdown complete")
+}
+
+func setupInformerAndWaitForSync(clientset *kubernetes.Clientset, app *AppK8sEvents2Redis) chan struct{} {
 	kubeInformerFactory := kubeinformers.NewSharedInformerFactory(clientset, informerResyncInterval)
 	if err := setupEventHandler(kubeInformerFactory, app); err != nil {
 		log.Fatalf("Failed to setup event handler: %v", err)
@@ -357,7 +402,6 @@ func main() {
 	stop := make(chan struct{})
 	kubeInformerFactory.Start(stop)
 
-	// Wait for cache sync
 	log.Infoln("Waiting for informer cache to sync...")
 	if !cache.WaitForCacheSync(stop, kubeInformerFactory.Core().V1().Events().Informer().HasSynced) {
 		close(stop)
@@ -367,24 +411,16 @@ func main() {
 	informerSynced.Set(1)
 	log.Infoln("Informer cache synced successfully")
 
-	// Setup signal handling for graceful shutdown
+	return stop
+}
+
+func waitForShutdownSignal() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	log.Infoln("k8see-exporter started. Press Ctrl+C to stop.")
 	<-sigChan
 	log.Infoln("Received shutdown signal. Shutting down gracefully...")
-
-	// Stop informer
-	close(stop)
-
-	// Graceful shutdown with timeout
-	if err := app.Shutdown(); err != nil {
-		log.Errorf("Error during shutdown: %v", err)
-		os.Exit(1)
-	}
-
-	log.Infoln("Shutdown complete")
 }
 
 // NewApp is the factory, return an error if the connection to redis server failed.
