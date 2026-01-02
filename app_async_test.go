@@ -8,7 +8,6 @@ import (
 	main "github.com/sgaunet/k8see-exporter"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
 
@@ -51,8 +50,8 @@ func TestStartWorkers_NoError(t *testing.T) {
 	client := createTestRedisClient()
 	defer client.Close()
 
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 	defer func() {
 		shutdownErr := app.Shutdown()
 		assert.NoError(t, shutdownErr)
@@ -77,15 +76,15 @@ func TestStartWorkers_MultipleCallsNoLeak(t *testing.T) {
 	client := createTestRedisClient()
 	defer client.Close()
 
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 
 	// Call StartWorkers multiple times
 	app.StartWorkers()
 	app.StartWorkers() // Second call
 
 	// Shutdown should clean up all workers
-	err = app.Shutdown()
+	err := app.Shutdown()
 	assert.NoError(t, err)
 
 	// goleak.VerifyNone in defer will catch any leaks
@@ -99,13 +98,13 @@ func TestShutdown_EmptyQueue(t *testing.T) {
 	client := createTestRedisClient()
 	defer client.Close()
 
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 
 	app.StartWorkers()
 
 	// Shutdown immediately - no events in queue
-	err = app.Shutdown()
+	err := app.Shutdown()
 	assert.NoError(t, err)
 
 	// Verify no goroutine leaks (via TestMain's goleak.VerifyNone)
@@ -121,13 +120,13 @@ func TestShutdown_Idempotent(t *testing.T) {
 	client := createTestRedisClient()
 	defer client.Close()
 
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 
 	app.StartWorkers()
 
 	// First shutdown
-	err = app.Shutdown()
+	err := app.Shutdown()
 	assert.NoError(t, err)
 
 	// Second shutdown - CURRENT BEHAVIOR: panics with "close of closed channel"
@@ -147,11 +146,11 @@ func TestShutdown_WithoutStartWorkers(t *testing.T) {
 	client := createTestRedisClient()
 	defer client.Close()
 
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 
 	// Shutdown without starting workers - should handle gracefully
-	err = app.Shutdown()
+	err := app.Shutdown()
 	// May error or succeed depending on implementation, but should not panic
 	// We just verify it doesn't panic
 	_ = err
@@ -169,14 +168,14 @@ func TestShutdown_TimeoutBehavior(t *testing.T) {
 	client := createTestRedisClient()
 	defer client.Close()
 
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 
 	app.StartWorkers()
 
 	// Shutdown - should complete within timeout
 	start := time.Now()
-	err = app.Shutdown()
+	err := app.Shutdown()
 	elapsed := time.Since(start)
 
 	// Should complete reasonably quickly (within 2x timeout + overhead)
@@ -195,8 +194,8 @@ func TestShutdown_WorkerCleanup(t *testing.T) {
 	client := createTestRedisClient()
 	defer client.Close()
 
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 
 	app.StartWorkers()
 
@@ -204,7 +203,7 @@ func TestShutdown_WorkerCleanup(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Shutdown should stop all workers
-	err = app.Shutdown()
+	err := app.Shutdown()
 	assert.NoError(t, err)
 
 	// goleak.VerifyNone will catch any worker goroutines that didn't exit
@@ -226,8 +225,8 @@ func TestNewAppWithRedis_ConfigDefaults(t *testing.T) {
 	client := createTestRedisClient()
 	defer client.Close()
 
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 	defer func() {
 		_ = app.Shutdown()
 	}()
@@ -246,12 +245,12 @@ func TestShutdown_RedisClientClosed(t *testing.T) {
 	client := createTestRedisClient()
 	// Note: We don't defer client.Close() here because Shutdown() should close it
 
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 
 	app.StartWorkers()
 
-	err = app.Shutdown()
+	err := app.Shutdown()
 	assert.NoError(t, err)
 
 	// Verify client is closed by attempting an operation
@@ -276,8 +275,8 @@ func TestShutdown_ConcurrentCalls(t *testing.T) {
 	client := createTestRedisClient()
 	defer client.Close()
 
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 
 	app.StartWorkers()
 
@@ -313,13 +312,13 @@ func TestShutdown_CustomTimeout(t *testing.T) {
 	client := createTestRedisClient()
 	defer client.Close()
 
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 
 	app.StartWorkers()
 
 	start := time.Now()
-	err = app.Shutdown()
+	err := app.Shutdown()
 	elapsed := time.Since(start)
 
 	assert.NoError(t, err)

@@ -504,6 +504,39 @@ func waitForShutdownSignal() {
 	log.Infoln("Received shutdown signal. Shutting down gracefully...")
 }
 
+func initCircuitBreaker(cfg YamlConfig) *gobreaker.CircuitBreaker {
+	if !cfg.CircuitBreakerEnabled {
+		return nil
+	}
+	return gobreaker.NewCircuitBreaker(gobreaker.Settings{
+		Name:        "RedisWrite",
+		MaxRequests: cfg.CircuitBreakerMaxRequests,
+		Interval:    time.Duration(cfg.CircuitBreakerInterval) * time.Second,
+		Timeout:     time.Duration(cfg.CircuitBreakerTimeout) * time.Second,
+		ReadyToTrip: func(counts gobreaker.Counts) bool {
+			failureRatio := float64(counts.TotalFailures) / float64(counts.Requests)
+			return counts.Requests >= 3 && failureRatio >= cfg.CircuitBreakerFailureRatio
+		},
+		OnStateChange: func(name string, from gobreaker.State, to gobreaker.State) {
+			log.WithFields(logrus.Fields{
+				"circuitBreaker": name,
+				"fromState":      from.String(),
+				"toState":        to.String(),
+			}).Warn("Circuit breaker state changed")
+			// Update metrics
+			switch to {
+			case gobreaker.StateClosed:
+				circuitBreakerState.Set(circuitBreakerStateClosed)
+			case gobreaker.StateHalfOpen:
+				circuitBreakerState.Set(circuitBreakerStateHalfOpen)
+			case gobreaker.StateOpen:
+				circuitBreakerState.Set(circuitBreakerStateOpen)
+				circuitBreakerTrips.Inc()
+			}
+		},
+	})
+}
+
 // NewApp is the factory, return an error if the connection to redis server failed.
 func NewApp(cfg YamlConfig) (*AppK8sEvents2Redis, error) {
 	app := &AppK8sEvents2Redis{
@@ -527,37 +560,9 @@ func NewApp(cfg YamlConfig) (*AppK8sEvents2Redis, error) {
 			MaxInterval:     time.Duration(cfg.BackoffMaxInterval) * time.Millisecond,
 			MaxElapsedTime:  time.Duration(cfg.BackoffMaxElapsedTime) * time.Millisecond,
 		},
-	}
 
-	// Initialize circuit breaker if enabled
-	if cfg.CircuitBreakerEnabled {
-		app.circuitBreaker = gobreaker.NewCircuitBreaker(gobreaker.Settings{
-			Name:        "RedisWrite",
-			MaxRequests: cfg.CircuitBreakerMaxRequests,
-			Interval:    time.Duration(cfg.CircuitBreakerInterval) * time.Second,
-			Timeout:     time.Duration(cfg.CircuitBreakerTimeout) * time.Second,
-			ReadyToTrip: func(counts gobreaker.Counts) bool {
-				failureRatio := float64(counts.TotalFailures) / float64(counts.Requests)
-				return counts.Requests >= 3 && failureRatio >= cfg.CircuitBreakerFailureRatio
-			},
-			OnStateChange: func(name string, from gobreaker.State, to gobreaker.State) {
-				log.WithFields(logrus.Fields{
-					"circuitBreaker": name,
-					"fromState":      from.String(),
-					"toState":        to.String(),
-				}).Warn("Circuit breaker state changed")
-				// Update metrics
-				switch to {
-				case gobreaker.StateClosed:
-					circuitBreakerState.Set(circuitBreakerStateClosed)
-				case gobreaker.StateHalfOpen:
-					circuitBreakerState.Set(circuitBreakerStateHalfOpen)
-				case gobreaker.StateOpen:
-					circuitBreakerState.Set(circuitBreakerStateOpen)
-					circuitBreakerTrips.Inc()
-				}
-			},
-		})
+		// Initialize circuit breaker
+		circuitBreaker: initCircuitBreaker(cfg),
 	}
 
 	// Set buffer capacity metric
@@ -578,7 +583,7 @@ func NewApp(cfg YamlConfig) (*AppK8sEvents2Redis, error) {
 // This function is primarily intended for testing purposes to allow mock injection.
 // Unlike NewApp, this does not call InitProducer() or StartWorkers() - the caller
 // must manage the Redis client lifecycle and explicitly call StartWorkers() if needed.
-func NewAppWithRedis(cfg YamlConfig, redisClient *redis.Client) (*AppK8sEvents2Redis, error) {
+func NewAppWithRedis(cfg YamlConfig, redisClient *redis.Client) *AppK8sEvents2Redis {
 	cfg.SetDefaults()
 
 	app := &AppK8sEvents2Redis{
@@ -603,37 +608,9 @@ func NewAppWithRedis(cfg YamlConfig, redisClient *redis.Client) (*AppK8sEvents2R
 			MaxInterval:     time.Duration(cfg.BackoffMaxInterval) * time.Millisecond,
 			MaxElapsedTime:  time.Duration(cfg.BackoffMaxElapsedTime) * time.Millisecond,
 		},
-	}
 
-	// Initialize circuit breaker if enabled
-	if cfg.CircuitBreakerEnabled {
-		app.circuitBreaker = gobreaker.NewCircuitBreaker(gobreaker.Settings{
-			Name:        "RedisWrite",
-			MaxRequests: cfg.CircuitBreakerMaxRequests,
-			Interval:    time.Duration(cfg.CircuitBreakerInterval) * time.Second,
-			Timeout:     time.Duration(cfg.CircuitBreakerTimeout) * time.Second,
-			ReadyToTrip: func(counts gobreaker.Counts) bool {
-				failureRatio := float64(counts.TotalFailures) / float64(counts.Requests)
-				return counts.Requests >= 3 && failureRatio >= cfg.CircuitBreakerFailureRatio
-			},
-			OnStateChange: func(name string, from gobreaker.State, to gobreaker.State) {
-				log.WithFields(logrus.Fields{
-					"circuitBreaker": name,
-					"fromState":      from.String(),
-					"toState":        to.String(),
-				}).Warn("Circuit breaker state changed")
-				// Update metrics
-				switch to {
-				case gobreaker.StateClosed:
-					circuitBreakerState.Set(circuitBreakerStateClosed)
-				case gobreaker.StateHalfOpen:
-					circuitBreakerState.Set(circuitBreakerStateHalfOpen)
-				case gobreaker.StateOpen:
-					circuitBreakerState.Set(circuitBreakerStateOpen)
-					circuitBreakerTrips.Inc()
-				}
-			},
-		})
+		// Initialize circuit breaker
+		circuitBreaker: initCircuitBreaker(cfg),
 	}
 
 	// Set buffer capacity metric
@@ -644,7 +621,7 @@ func NewAppWithRedis(cfg YamlConfig, redisClient *redis.Client) (*AppK8sEvents2R
 		redisConnected.Set(1)
 	}
 
-	return app, nil
+	return app
 }
 
 // InitProducer initialise redisClient and ensure that connection is ok.

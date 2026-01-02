@@ -41,13 +41,13 @@ func TestNewAppWithRedis_ValidConfig(t *testing.T) {
 	defer client.Close()
 
 	cfg := testConfig()
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 	require.NotNil(t, app)
 
 	// Verify app fields are initialized
 	assert.NotNil(t, app)
-	err = app.Close()
+	err := app.Close()
 	assert.NoError(t, err)
 }
 
@@ -59,12 +59,12 @@ func TestNewAppWithRedis_CircuitBreakerEnabled(t *testing.T) {
 	cfg := testConfig()
 	cfg.CircuitBreakerEnabled = true
 
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 	require.NotNil(t, app)
 
 	// Circuit breaker should be initialized (internal field, tested via behavior)
-	err = app.Close()
+	err := app.Close()
 	assert.NoError(t, err)
 }
 
@@ -76,11 +76,11 @@ func TestNewAppWithRedis_CircuitBreakerDisabled(t *testing.T) {
 	cfg := testConfig()
 	cfg.CircuitBreakerEnabled = false
 
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 	require.NotNil(t, app)
 
-	err = app.Close()
+	err := app.Close()
 	assert.NoError(t, err)
 }
 
@@ -95,12 +95,12 @@ func TestNewAppWithRedis_CustomBackoffConfig(t *testing.T) {
 	cfg.BackoffMaxInterval = 5000
 	cfg.BackoffMaxElapsedTime = 10000
 
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 	require.NotNil(t, app)
 
 	// Backoff config is initialized (internal field, verified via behavior)
-	err = app.Close()
+	err := app.Close()
 	assert.NoError(t, err)
 }
 
@@ -117,12 +117,12 @@ func TestNewAppWithRedis_DefaultsApplied(t *testing.T) {
 	}
 	// Don't call SetDefaults - NewAppWithRedis should do it
 
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 	require.NotNil(t, app)
 
 	// Verify defaults applied (channel size should be default 10000)
-	err = app.Close()
+	err := app.Close()
 	assert.NoError(t, err)
 }
 
@@ -130,12 +130,12 @@ func TestNewAppWithRedis_DefaultsApplied(t *testing.T) {
 func TestNewAppWithRedis_NilClient(t *testing.T) {
 	cfg := testConfig()
 
-	app, err := main.NewAppWithRedis(cfg, nil)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, nil)
+	
 	require.NotNil(t, app)
 
 	// Close should handle nil client gracefully
-	err = app.Close()
+	err := app.Close()
 	assert.NoError(t, err)
 }
 
@@ -163,14 +163,14 @@ func TestWrite2Stream_Success(t *testing.T) {
 	}
 	mock.CustomMatch(customMatch).ExpectXAdd(args).SetVal("1234-0")
 
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 	defer func() {
 		_ = app.Close()
 	}()
 
 	// Test write operation - should succeed
-	err = app.Write2Stream(event)
+	err := app.Write2Stream(event)
 	assert.NoError(t, err)
 }
 
@@ -196,14 +196,14 @@ func TestWrite2Stream_ConnectionFailure(t *testing.T) {
 	mock.CustomMatch(customMatch).ExpectXAdd(args).SetErr(assert.AnError)
 	mock.ExpectPing().SetErr(assert.AnError)
 
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 	defer func() {
 		_ = app.Close()
 	}()
 
 	// Write should fail after retry attempts
-	err = app.Write2Stream(event)
+	err := app.Write2Stream(event)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "an event has not been written")
 }
@@ -229,14 +229,14 @@ func TestWrite2Stream_RetrySuccess(t *testing.T) {
 	mock.ExpectPing().SetVal("PONG")
 	mock.CustomMatch(customMatch).ExpectXAdd(args).SetVal("1234-0")
 
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 	defer func() {
 		_ = app.Close()
 	}()
 
 	// Write should succeed on retry
-	err = app.Write2Stream(event)
+	err := app.Write2Stream(event)
 	assert.NoError(t, err)
 }
 
@@ -247,11 +247,11 @@ func TestClose_NormalClose(t *testing.T) {
 
 	cfg := testConfig()
 
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 
 	// Close should succeed without error
-	err = app.Close()
+	err := app.Close()
 	assert.NoError(t, err)
 }
 
@@ -259,11 +259,11 @@ func TestClose_NormalClose(t *testing.T) {
 func TestClose_NilClient(t *testing.T) {
 	cfg := testConfig()
 
-	app, err := main.NewAppWithRedis(cfg, nil)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, nil)
+	
 
 	// Close should handle nil client gracefully
-	err = app.Close()
+	err := app.Close()
 	assert.NoError(t, err)
 }
 
@@ -314,8 +314,8 @@ func TestWrite2Stream_MultipleEvents(t *testing.T) {
 		mock.CustomMatch(customMatch).ExpectXAdd(args).SetVal("1234-0")
 	}
 
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 	defer func() {
 		_ = app.Close()
 	}()
@@ -337,12 +337,12 @@ func TestNewAppWithRedis_CustomEventBufferSize(t *testing.T) {
 	cfg.EventWorkers = 2
 	cfg.ShutdownTimeout = 60
 
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 	require.NotNil(t, app)
 
 	// Verify app created successfully with custom config
-	err = app.Close()
+	err := app.Close()
 	assert.NoError(t, err)
 }
 
@@ -358,12 +358,12 @@ func TestNewAppWithRedis_AllCircuitBreakerSettings(t *testing.T) {
 	cfg.CircuitBreakerTimeout = 60
 	cfg.CircuitBreakerFailureRatio = 0.5
 
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 	require.NotNil(t, app)
 
 	// Circuit breaker should be configured with custom settings
-	err = app.Close()
+	err := app.Close()
 	assert.NoError(t, err)
 }
 
@@ -379,11 +379,11 @@ func TestNewAppWithRedis_MinimalConfig(t *testing.T) {
 		// All other fields should get defaults
 	}
 
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 	require.NotNil(t, app)
 
-	err = app.Close()
+	err := app.Close()
 	assert.NoError(t, err)
 }
 
@@ -394,11 +394,11 @@ func TestClose_DoubleClose(t *testing.T) {
 
 	cfg := testConfig()
 
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 
 	// First close should succeed
-	err = app.Close()
+	err := app.Close()
 	assert.NoError(t, err)
 
 	// Second close might error (Redis client already closed)
@@ -433,13 +433,13 @@ func TestWrite2Stream_WithEmptyFields(t *testing.T) {
 	args := &redis.XAddArgs{Stream: "k8sevents", MaxLen: 5000, Values: map[string]interface{}{}}
 	mock.CustomMatch(customMatch).ExpectXAdd(args).SetVal("1234-0")
 
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 	defer func() {
 		_ = app.Close()
 	}()
 
-	err = app.Write2Stream(event)
+	err := app.Write2Stream(event)
 	assert.NoError(t, err)
 }
 
@@ -462,13 +462,13 @@ func TestWrite2Stream_LargeMessage(t *testing.T) {
 	args := &redis.XAddArgs{Stream: "k8sevents", MaxLen: 5000, Values: map[string]interface{}{}}
 	mock.CustomMatch(customMatch).ExpectXAdd(args).SetVal("1234-0")
 
-	app, err := main.NewAppWithRedis(cfg, client)
-	require.NoError(t, err)
+	app := main.NewAppWithRedis(cfg, client)
+	
 	defer func() {
 		_ = app.Close()
 	}()
 
-	err = app.Write2Stream(event)
+	err := app.Write2Stream(event)
 	assert.NoError(t, err)
 }
 
