@@ -69,4 +69,80 @@ var (
 		},
 		[]string{"operation"},
 	)
+
+	// Buffer metrics.
+	eventBufferSize = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "k8see_event_buffer_size",
+			Help: "Current number of events in the buffer",
+		},
+	)
+
+	eventBufferCapacity = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "k8see_event_buffer_capacity",
+			Help: "Maximum capacity of the event buffer",
+		},
+	)
+
+	eventBufferUtilization = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "k8see_event_buffer_utilization_ratio",
+			Help: "Event buffer utilization ratio (0-1)",
+		},
+	)
+
+	eventsDroppedTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "k8see_events_dropped_total",
+			Help: "Total number of events dropped due to full buffer",
+		},
+	)
+
+	eventsEnqueuedTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "k8see_events_enqueued_total",
+			Help: "Total number of events enqueued to buffer",
+		},
+	)
+
+	// Circuit breaker metrics.
+	circuitBreakerState = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "k8see_circuit_breaker_state",
+			Help: "Circuit breaker state (0=closed, 1=half-open, 2=open)",
+		},
+	)
+
+	circuitBreakerTrips = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "k8see_circuit_breaker_trips_total",
+			Help: "Total number of circuit breaker trips",
+		},
+	)
+
+	// Retry metrics.
+	redisRetryAttemptsHistogram = promauto.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "k8see_redis_retry_attempts",
+			Help:    "Number of retry attempts per operation",
+			Buckets: prometheus.LinearBuckets(0, 1, maxRetryAttemptsHistogram),
+		},
+	)
+
+	redisBackoffDuration = promauto.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "k8see_redis_backoff_duration_seconds",
+			Help:    "Duration of backoff delays",
+			Buckets: []float64{0.1, 0.5, 1, 2, 5, 10, 30, 60}, // seconds
+		},
+	)
+
+	// Worker pool metrics.
+	activeWorkers = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "k8see_active_workers",
+			Help: "Number of active event processing workers",
+		},
+	)
 )
