@@ -30,6 +30,54 @@ The application can be deployed using:
 * **Helm Chart**: [helm-k8see](https://github.com/sgaunet/helm-k8see/)
 * **Kubernetes Manifests**: [k8see-deploy](https://github.com/sgaunet/k8see-deploy/tree/main/manifests/k8see-exporter)
 
+## RBAC Requirements
+
+k8see-exporter requires **cluster-wide read permissions** for Kubernetes events.
+
+### Required Permissions
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8see-exporter
+  namespace: k8see
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8see-exporter
+rules:
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k8see-exporter
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k8see-exporter
+subjects:
+- kind: ServiceAccount
+  name: k8see-exporter
+  namespace: k8see
+```
+
+### Why Cluster-Wide?
+
+k8see-exporter monitors events across **all namespaces** to provide comprehensive cluster observability. It uses a Kubernetes informer that watches the entire cluster.
+
+### Security Considerations
+
+- **Read-only access**: Only requires `get`, `list`, `watch` (no write permissions)
+- **Events only**: No access to Pods, Secrets, or other sensitive resources
+- **Standard pattern**: Same permissions as `kubectl get events --all-namespaces`
+
+> **Note**: If using Helm deployment, RBAC resources are automatically created. Manual deployments require creating these resources.
+
 # Development environment
 
 [The repository k8see-deploy](https://github.com/sgaunet/k8see-deploy) contains the whole procedure to deploy a full test environment in a k8s cluster (with kind). The repository contains also themanifests to deploy k8see-exporter.
