@@ -15,15 +15,15 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
+	"github.com/sirupsen/logrus"
 	"github.com/sony/gobreaker"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
-
-	"github.com/sirupsen/logrus"
 	kubeinformers "k8s.io/client-go/informers"
 )
 
@@ -40,6 +40,8 @@ const (
 	redisOperationTimeout = 5 * time.Second
 	// metricsServerReadHeaderTimeout is the timeout for reading request headers in the metrics server.
 	metricsServerReadHeaderTimeout = 5 * time.Second
+	// readinessCheckTimeout is the timeout for readiness probe Redis ping.
+	readinessCheckTimeout = 2 * time.Second
 
 	// Circuit breaker state values.
 	circuitBreakerStateClosed   = 0
@@ -272,12 +274,15 @@ func loadBackoffConfigFromEnv(cfg *YamlConfig) {
 	}
 }
 
-func startMetricsServer(port string) {
+func startMetricsServer(port string, app *AppK8sEvents2Redis) {
 	http.Handle("/metrics", promhttp.Handler())
+	http.HandleFunc("/healthz", handleLiveness)
+	http.HandleFunc("/readyz", handleReadiness(app))
+
 	addr := ":" + port
 	log.WithFields(logrus.Fields{
 		"address": addr,
-	}).Info("Starting metrics server")
+	}).Info("Starting metrics and health server")
 
 	server := &http.Server{
 		Addr:              addr,
@@ -288,6 +293,61 @@ func startMetricsServer(port string) {
 		log.WithFields(logrus.Fields{
 			"error": err.Error(),
 		}).Error("Metrics server failed")
+	}
+}
+
+// handleLiveness provides a liveness probe endpoint.
+// Returns 200 OK if the application is running (not deadlocked).
+func handleLiveness(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write([]byte("ok")); err != nil {
+		log.WithFields(logrus.Fields{
+			"error": err.Error(),
+		}).Error("Failed to write liveness response")
+	}
+}
+
+// handleReadiness returns a handler for readiness probe endpoint.
+// Checks Redis connectivity and informer sync status.
+func handleReadiness(app *AppK8sEvents2Redis) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Check Redis connection with short timeout derived from request context
+		ctx, cancel := context.WithTimeout(r.Context(), readinessCheckTimeout)
+		defer cancel()
+
+		if app.redisClient != nil {
+			if err := app.redisClient.Ping(ctx).Err(); err != nil {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				if _, writeErr := w.Write([]byte("redis unavailable")); writeErr != nil {
+					log.WithFields(logrus.Fields{
+						"error": writeErr.Error(),
+					}).Error("Failed to write readiness response")
+				}
+				return
+			}
+		}
+
+		// Check informer sync status via metric
+		// The informerSynced metric is set to 1 when synced, 0 when not synced
+		metric := &dto.Metric{}
+		if err := informerSynced.Write(metric); err == nil {
+			if metric.GetGauge().GetValue() == 0 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				if _, writeErr := w.Write([]byte("informer not synced")); writeErr != nil {
+					log.WithFields(logrus.Fields{
+						"error": writeErr.Error(),
+					}).Error("Failed to write readiness response")
+				}
+				return
+			}
+		}
+
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write([]byte("ready")); err != nil {
+			log.WithFields(logrus.Fields{
+				"error": err.Error(),
+			}).Error("Failed to write readiness response")
+		}
 	}
 }
 
@@ -387,13 +447,13 @@ func main() {
 	cfg := loadConfiguration(fileConfigName)
 	log.Debugf("cfg=%+v\n", cfg)
 
-	// Start metrics server in background
-	go startMetricsServer(cfg.MetricsPort)
-
 	app, err := NewApp(cfg)
 	if err != nil {
 		log.Fatalf("Failed to initialize application: %v", err)
 	}
+
+	// Start metrics and health server in background
+	go startMetricsServer(cfg.MetricsPort, app)
 
 	clientset, err := setupKubernetesClient()
 	if err != nil {

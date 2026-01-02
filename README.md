@@ -30,6 +30,47 @@ The application can be deployed using:
 * **Helm Chart**: [helm-k8see](https://github.com/sgaunet/helm-k8see/)
 * **Kubernetes Manifests**: [k8see-deploy](https://github.com/sgaunet/k8see-deploy/tree/main/manifests/k8see-exporter)
 
+## Health Endpoints
+
+k8see-exporter exposes HTTP health endpoints for Kubernetes probes on port **2112** (configurable via `METRICS_PORT` environment variable):
+
+- **`/healthz`** - Liveness probe (returns 200 OK if running)
+- **`/readyz`** - Readiness probe (returns 200 OK if Redis is connected and informer is synced)
+- **`/metrics`** - Prometheus metrics endpoint
+
+### Kubernetes Probe Configuration
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+      - name: k8see-exporter
+        ports:
+        - name: metrics
+          containerPort: 2112
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: metrics
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 2
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: metrics
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 2
+          failureThreshold: 2
+```
+
+The readiness probe will mark the pod as NotReady during Redis connection issues, preventing traffic routing to unhealthy instances.
+
 ## RBAC Requirements
 
 k8see-exporter requires **cluster-wide read permissions** for Kubernetes events.
